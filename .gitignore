@@ -1,0 +1,29 @@
+# OS / editor artefacts
+*.stackdump
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.env
+
+# Node / Frontend
+node_modules/
+.next/
+out/
+
+# Storage (session data, generated videos)
+storage/
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace

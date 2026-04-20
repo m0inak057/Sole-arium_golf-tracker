@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+:root {
+  --color-primary: #00D4FF;
+  --color-accent: #FFD700;
+  --color-green: #22C55E;
+  --color-amber: #F59E0B;
+  --color-red: #EF4444;
+  --color-bg-dark: #0A0E17;
+  --color-bg-card: #111827;
+  --color-bg-elevated: #1F2937;
+  --color-text-primary: #F9FAFB;
+  --color-text-secondary: #9CA3AF;
+  --color-border: rgba(255, 255, 255, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  background: var(--color-bg-dark);
+  color: var(--color-text-primary);
+  min-height: 100vh;
+}
+
+/* ── Gradient backgrounds ──────────────────────────────────────────────── */
+
+.bg-gradient-radial {
+  background: radial-gradient(ellipse at top, rgba(0, 212, 255, 0.08) 0%, transparent 60%),
+              radial-gradient(ellipse at bottom right, rgba(255, 215, 0, 0.04) 0%, transparent 50%),
+              var(--color-bg-dark);
+}
+
+/* ── Glassmorphism card ────────────────────────────────────────────────── */
+
+.glass-card {
+  background: rgba(17, 24, 39, 0.7);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--color-border);
+  border-radius: 1rem;
+}
+
+/* ── Glow effect ───────────────────────────────────────────────────────── */
+
+.glow-cyan {
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.15),
+              0 0 60px rgba(0, 212, 255, 0.05);
+}
+
+.glow-gold {
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.15),
+              0 0 60px rgba(255, 215, 0, 0.05);
+}
+
+/* ── Progress bar animation ────────────────────────────────────────────── */
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.progress-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 212, 255, 0.3) 0%,
+    rgba(0, 212, 255, 0.6) 50%,
+    rgba(0, 212, 255, 0.3) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* ── Upload dropzone pulse ─────────────────────────────────────────────── */
+
+@keyframes pulse-border {
+  0%, 100% { border-color: rgba(0, 212, 255, 0.2); }
+  50% { border-color: rgba(0, 212, 255, 0.5); }
+}
+
+.dropzone-pulse {
+  animation: pulse-border 2s ease-in-out infinite;
+}
+
+/* ── Score band colours ────────────────────────────────────────────────── */
+
+.band-green { color: var(--color-green); }
+.band-amber { color: var(--color-amber); }
+.band-red { color: var(--color-red); }
+
+/* ── Smooth page transitions ──────────────────────────────────────────── */
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.5s ease-out forwards;
+}
+
+@keyframes fade-in-delay {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in-delay {
+  opacity: 0;
+  animation: fade-in-delay 0.5s ease-out 0.2s forwards;
+}
+
+/* ── Spinner ───────────────────────────────────────────────────────────── */
+
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
