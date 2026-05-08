@@ -14,14 +14,18 @@ class Settings(BaseSettings):
     """Immutable application-wide settings."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "../.env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     # ── LLM config ───────────────────────────────────────────────────
-    gemini_api_key: str
-    gemini_model: str = "gemini-2.5-flash"
+    llm_provider: str = "gemini"  # "gemini" | "anthropic"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-1.5-flash"
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-opus-4-7"
 
     # ── Storage ──────────────────────────────────────────────────────
     storage_backend: str = "local"  # "local" | "s3"

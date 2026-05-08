@@ -61,6 +61,22 @@ export async function createSession(
   });
 }
 
+export async function createDualSession(
+  faceOnVideo: File,
+  downTheLineVideo: File,
+  gender: "male" | "female",
+): Promise<SessionCreateResponse> {
+  const formData = new FormData();
+  formData.append("face_on_video", faceOnVideo);
+  formData.append("down_the_line_video", downTheLineVideo);
+  formData.append("gender", gender);
+
+  return apiFetch<SessionCreateResponse>("/api/session/dual", {
+    method: "POST",
+    body: formData,
+  });
+}
+
 export async function getSessionStatus(
   sessionId: string,
 ): Promise<SessionStatusResponse> {
@@ -111,13 +127,22 @@ export async function getOutputStatus(
 export function getVideoStreamUrl(
   sessionId: string,
   kind: "slowmo" | "annotated",
+  angle?: "face_on" | "down_the_line",
 ): string {
+  if (angle) {
+    return `${API_BASE}/api/output/${sessionId}/${kind}/${angle.replace("_", "-")}`;
+  }
   return `${API_BASE}/api/output/${sessionId}/${kind}`;
 }
 
 export function getVideoDownloadUrl(
   sessionId: string,
   kind: "slowmo" | "annotated",
+  angle?: "face_on" | "down_the_line",
 ): string {
-  return `${API_BASE}/api/output/${sessionId}/download/${kind}`;
+  let url = `${API_BASE}/api/output/${sessionId}/download/${kind}`;
+  if (angle) {
+    url += `?angle=${angle.replace("_", "-")}`;
+  }
+  return url;
 }

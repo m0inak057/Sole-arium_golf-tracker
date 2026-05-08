@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest backend/tests/ -v)",
+      "PowerShell(cd \"d:\\\\Sole-Arium\\\\Golf-Trainer-2\"; Get-ChildItem -Path . -Depth 0 -Force | Sort-Object Name | Select-Object Name, @{Name=\"Type\"; Expression={if\\($_.PSIsContainer\\){\"DIR\"}else{\"FILE\"}}}  | Format-Table -AutoSize)",
+      "PowerShell(cd \"d:\\\\Sole-Arium\\\\Golf-Trainer-2\"; @\\(\"samples\", \"scratch\", \"storage\"\\) | ForEach-Object { Write-Host \"`n📁 $_/\" -ForegroundColor Cyan; Get-ChildItem -Path $_ -Force 2>/dev/null | Select-Object Name | Head -20 })",
+      "Bash(python -m pytest backend/tests/test_agent4_threshold.py::TestThresholdAdaptationAgent::test_build_user_prompt_with_missing_metrics -v)",
+      "Bash(python -m pytest backend/tests/test_agent5_coaching.py::TestAgent5Response::test_empty_coaching_output_invalid -v)"
+    ]
+  }
+}

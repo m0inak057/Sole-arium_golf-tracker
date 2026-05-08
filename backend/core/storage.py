@@ -55,16 +55,54 @@ class LocalStorage:
         """
         return self.session_dir(session_id) / "session.json"
 
-    def input_video_path(self, session_id: str) -> Path:
+    def input_video_path(self, session_id: str, angle: str | None = None) -> Path:
         """Return the path where the uploaded video is stored.
 
         Args:
             session_id: UUID of the session.
+            angle: Camera angle ("face_on" or "down_the_line") for dual video mode.
+                  If None, returns legacy single video path.
 
         Returns:
-            Path to ``storage/{session_id}/input.mp4``.
+            Path to the input video file.
         """
-        return self.session_dir(session_id) / "input.mp4"
+        if angle is None:
+            # Legacy single video mode
+            return self.session_dir(session_id) / "input.mp4"
+        elif angle == "face_on":
+            return self.session_dir(session_id) / "input_face_on.mp4"
+        elif angle == "down_the_line":
+            return self.session_dir(session_id) / "input_down_the_line.mp4"
+        else:
+            raise ValueError(f"Invalid angle: {angle}. Must be 'face_on' or 'down_the_line'")
+
+    def get_input_video_paths(self, session_id: str) -> dict[str, Path]:
+        """Get all available input video paths for a session.
+        
+        Args:
+            session_id: UUID of the session.
+            
+        Returns:
+            Dictionary mapping angle names to paths for existing videos.
+        """
+        paths = {}
+        
+        # Check for dual video files
+        face_on_path = self.input_video_path(session_id, "face_on")
+        if face_on_path.exists():
+            paths["face_on"] = face_on_path
+            
+        down_the_line_path = self.input_video_path(session_id, "down_the_line")
+        if down_the_line_path.exists():
+            paths["down_the_line"] = down_the_line_path
+            
+        # Check for legacy single video
+        legacy_path = self.input_video_path(session_id, None)
+        if legacy_path.exists() and not paths:
+            # Only use legacy if no dual videos exist
+            paths["legacy"] = legacy_path
+            
+        return paths
 
     def agents_dir(self, session_id: str) -> Path:
         """Return the agents debug directory, creating it if needed.
@@ -133,44 +171,139 @@ class LocalStorage:
 
     # ── Video I/O ────────────────────────────────────────────────────
 
-    async def save_upload(self, session_id: str, content: bytes, extension: str = ".mp4") -> Path:
+    async def save_upload(self, session_id: str, content: bytes, extension: str = ".mp4", angle: str | None = None) -> Path:
         """Persist an uploaded video file.
 
         Args:
             session_id: UUID of the session.
             content: Raw file bytes.
             extension: File extension (default ``.mp4``).
+            angle: Camera angle for dual video mode ("face_on" or "down_the_line").
+                  If None, saves as legacy single video.
 
         Returns:
             Path to the saved file.
         """
-        dest = self.session_dir(session_id) / f"input{extension}"
+        if angle is None:
+            # Legacy single video mode
+            dest = self.session_dir(session_id) / f"input{extension}"
+        elif angle == "face_on":
+            dest = self.session_dir(session_id) / f"input_face_on{extension}"
+        elif angle == "down_the_line":
+            dest = self.session_dir(session_id) / f"input_down_the_line{extension}"
+        else:
+            raise ValueError(f"Invalid angle: {angle}. Must be 'face_on' or 'down_the_line'")
+            
         dest.write_bytes(content)
         log_event(
             logger,
-            f"Upload saved ({len(content)} bytes)",
+            f"Upload saved ({len(content)} bytes)" + (f" - {angle}" if angle else ""),
             session_id=session_id,
             event="upload_saved",
+            angle=angle,
         )
         return dest
 
-    def get_video_path(self, session_id: str, kind: str) -> Path | None:
+    async def save_dual_upload(self, session_id: str, face_on_content: bytes, down_the_line_content: bytes, extension: str = ".mp4") -> tuple[Path, Path]:
+        """Persist both video files for dual video mode.
+
+        Args:
+            session_id: UUID of the session.
+            face_on_content: Raw bytes for face-on video.
+            down_the_line_content: Raw bytes for down-the-line video.
+            extension: File extension (default ``.mp4``).
+
+        Returns:
+            Tuple of (face_on_path, down_the_line_path).
+        """
+        face_on_path = await self.save_upload(session_id, face_on_content, extension, "face_on")
+        down_the_line_path = await self.save_upload(session_id, down_the_line_content, extension, "down_the_line")
+        
+        log_event(
+            logger,
+            f"Dual video upload saved (face_on: {len(face_on_content)} bytes, down_the_line: {len(down_the_line_content)} bytes)",
+            session_id=session_id,
+            event="dual_upload_saved",
+        )
+        
+        return face_on_path, down_the_line_path
+
+    def get_video_path(self, session_id: str, kind: str, angle: str | None = None) -> Path | None:
         """Return a video path if the file exists.
 
         Args:
             session_id: UUID of the session.
             kind: One of ``"input"``, ``"slowmo"``, ``"annotated"``.
+            angle: Camera angle for dual video mode ("face_on" or "down_the_line").
+                  If None, returns legacy single video path.
 
         Returns:
             Path if the file exists, else ``None``.
         """
-        filenames = {
-            "input": "input.mp4",
-            "slowmo": "slowmo.mp4",
-            "annotated": "annotated.mp4",
-        }
+        if angle is None:
+            # Legacy single video mode
+            filenames = {
+                "input": "input.mp4",
+                "slowmo": "slowmo.mp4",
+                "annotated": "annotated.mp4",
+            }
+        else:
+            # Dual video mode
+            if angle == "face_on":
+                filenames = {
+                    "input": "input_face_on.mp4",
+                    "slowmo": "slowmo_face_on.mp4",
+                    "annotated": "annotated_face_on.mp4",
+                }
+            elif angle == "down_the_line":
+                filenames = {
+                    "input": "input_down_the_line.mp4",
+                    "slowmo": "slowmo_down_the_line.mp4",
+                    "annotated": "annotated_down_the_line.mp4",
+                }
+            else:
+                return None
+                
         name = filenames.get(kind)
         if name is None:
             return None
         path = self.session_dir(session_id) / name
         return path if path.is_file() else None
+
+    def get_all_video_paths(self, session_id: str, kind: str) -> dict[str, Path]:
+        """Get all available video paths for a specific kind across all angles.
+        
+        Args:
+            session_id: UUID of the session.
+            kind: One of ``"input"``, ``"slowmo"``, ``"annotated"``.
+            
+        Returns:
+            Dictionary mapping angle names to paths for existing videos.
+        """
+        paths = {}
+        
+        # Check dual video files
+        for angle in ["face_on", "down_the_line"]:
+            path = self.get_video_path(session_id, kind, angle)
+            if path is not None:
+                paths[angle] = path
+                
+        # Check legacy single video if no dual videos found
+        if not paths:
+            legacy_path = self.get_video_path(session_id, kind, None)
+            if legacy_path is not None:
+                paths["legacy"] = legacy_path
+                
+        return paths
+
+    def is_dual_video_session(self, session_id: str) -> bool:
+        """Check if a session uses dual video mode.
+        
+        Args:
+            session_id: UUID of the session.
+            
+        Returns:
+            True if session has dual video inputs.
+        """
+        input_paths = self.get_input_video_paths(session_id)
+        return "face_on" in input_paths and "down_the_line" in input_paths

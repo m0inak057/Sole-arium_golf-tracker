@@ -29,36 +29,34 @@ export function useSessionPolling(
 
   const [data, setData] = useState<SessionStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isPolling, setIsPolling] = useState(false);
+  const [isPolling, setIsPolling] = useState(enabled && !!sessionId);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const poll = useCallback(async () => {
-    try {
-      const status = await getSessionStatus(sessionId);
-      setData(status);
-      setError(null);
-
-      // Stop polling on terminal states
-      if (status.status === "complete" || status.status === "failed") {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
+  const poll = useCallback(() => {
+    getSessionStatus(sessionId)
+      .then((status) => {
+        setData(status);
+        setError(null);
+        if (status.status === "complete" || status.status === "failed") {
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
+          setIsPolling(false);
         }
-        setIsPolling(false);
-      }
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setError(`${err.code}: ${err.message}`);
-      } else {
-        setError("Failed to poll session status");
-      }
-    }
+      })
+      .catch((err) => {
+        if (err instanceof ApiError) {
+          setError(`${err.code}: ${err.message}`);
+        } else {
+          setError("Failed to poll session status");
+        }
+      });
   }, [sessionId]);
 
   useEffect(() => {
     if (!enabled || !sessionId) return;
 
-    setIsPolling(true);
     // Immediate first poll
     poll();
     intervalRef.current = setInterval(poll, intervalMs);

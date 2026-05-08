@@ -1,4 +1,4 @@
-"""Video processor — slow-motion rendering.
+"""Video processor — slow-motion rendering and output path management.
 
 Contains ``render_slowmo_clip()`` and ``get_output_video_path()``.
 Full implementation in Sprint 2 (Phase 7).
@@ -8,6 +8,11 @@ See architecture.md §4 Phase 7.
 from __future__ import annotations
 
 from pathlib import Path
+
+from backend.phase7.slowmo import render_slowmo
+from backend.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def render_slowmo_clip(
@@ -30,12 +35,29 @@ def render_slowmo_clip(
         original_fps: FPS of the source video.
 
     Returns:
-        Path to the rendered slow-mo file.
+        Path to the rendered slow-mo file if successful, raises ValueError otherwise.
 
     Raises:
-        NotImplementedError: Until Sprint 2 implementation.
+        ValueError: If rendering fails.
     """
-    raise NotImplementedError("Phase 7 — Sprint 2")
+    success = render_slowmo(
+        input_path,
+        output_path,
+        backswing_start,
+        follow_through_end,
+        original_fps,
+    )
+
+    if not success:
+        raise ValueError(
+            f"Failed to render slowmo from {input_path} to {output_path} "
+            f"(frames {backswing_start}-{follow_through_end} at {original_fps} fps)"
+        )
+
+    if not output_path.exists():
+        raise ValueError(f"Output video not created: {output_path}")
+
+    return output_path
 
 
 def get_output_video_path(session_dir: Path, kind: str) -> Path:
@@ -47,6 +69,12 @@ def get_output_video_path(session_dir: Path, kind: str) -> Path:
 
     Returns:
         Path to the output file.
+
+    Raises:
+        ValueError: If kind is not recognized.
     """
     filenames = {"slowmo": "slowmo.mp4", "annotated": "annotated.mp4"}
+    if kind not in filenames:
+        raise ValueError(f"Unknown video kind: {kind}. Must be 'slowmo' or 'annotated'.")
+    
     return session_dir / filenames[kind]

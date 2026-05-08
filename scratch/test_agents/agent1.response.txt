@@ -1,0 +1,1 @@
+{"input_fps":30.0,"camera_angle":"face_on","video_quality_score":0.0,"resolution":{"width":1920,"height":1080},"agent1_notes":"No keypoints detected and zero duration reported; camera angle defaulted without pose evidence."}

@@ -164,28 +164,95 @@ async def _agent1_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
     from backend.agents.video_intelligence_agent import VideoIntelligenceAgent, analyze_video_intelligence
 
     d = storage.session_dir(session.session_id)
-    videos = list(d.glob("input.*"))
-    if not videos:
-        raise FileNotFoundError(f"Input video not found for {session.session_id}")
-    video_path = videos[0]
-
-    try:
-        session_data = analyze_video_intelligence(video_path)
-    except Exception as e:
-        raise RuntimeError("unreadable_video") from e
-
-    agent = VideoIntelligenceAgent()
-    agents_dir = storage.agents_dir(session.session_id)
-    result = await agent.run(session_data, session.session_id, agents_dir)
-
-    session.input_fps = result["input_fps"]
-    session.camera_angle = result["camera_angle"]
-    session.video_quality_score = result["video_quality_score"]
     
-    # We parse the resolution dict from the raw dict representation
-    from backend.core.session import Resolution
-    session.resolution = Resolution(width=result["resolution"]["width"], height=result["resolution"]["height"])
-    session.agent1_notes = result["agent1_notes"]
+    # Check if this is a dual video session
+    input_paths = storage.get_input_video_paths(session.session_id)
+    
+    if not input_paths:
+        raise FileNotFoundError(f"Input video not found for {session.session_id}")
+    
+    if storage.is_dual_video_session(session.session_id):
+        # Dual video mode - process both videos and combine results
+        if "face_on" not in input_paths or "down_the_line" not in input_paths:
+            raise FileNotFoundError(f"Dual video session missing required videos for {session.session_id}")
+        
+        # Process face-on video
+        try:
+            face_on_data = analyze_video_intelligence(input_paths["face_on"])
+        except Exception as e:
+            raise RuntimeError("unreadable_video") from e
+        
+        # Process down-the-line video
+        try:
+            dtl_data = analyze_video_intelligence(input_paths["down_the_line"])
+        except Exception as e:
+            raise RuntimeError("unreadable_video") from e
+        
+        # Combine agent notes
+        agent = VideoIntelligenceAgent()
+        agents_dir = storage.agents_dir(session.session_id)
+        
+        # Create combined session data for agent
+        combined_data = {
+            "face_on": face_on_data,
+            "down_the_line": dtl_data,
+            "dual_video_mode": True,
+            # Pack metadata for the prompt builder if needed
+            "fps": face_on_data["fps"],
+            "width": face_on_data["width"],
+            "height": face_on_data["height"],
+            "duration_seconds": face_on_data["duration_seconds"],
+            "geometry_samples": face_on_data["geometry_samples"]
+        }
+        
+        result = await agent.run(combined_data, session.session_id, agents_dir)
+        
+        # Update dual video metadata from agent result
+        if session.dual_video_metadata:
+            # Note: The agent currently returns a single resolution/fps. 
+            # In dual mode, we use these as primary.
+            session.dual_video_metadata.face_on_fps = result["input_fps"]
+            session.dual_video_metadata.down_the_line_fps = result["input_fps"]
+            
+            from backend.core.session import Resolution
+            res = Resolution(width=result["resolution"]["width"], height=result["resolution"]["height"])
+            session.dual_video_metadata.face_on_resolution = res
+            session.dual_video_metadata.down_the_line_resolution = res
+            
+            session.dual_video_metadata.face_on_quality_score = result["video_quality_score"]
+            session.dual_video_metadata.down_the_line_quality_score = result["video_quality_score"]
+        
+        # Update primary session fields
+        session.input_fps = result["input_fps"]
+        session.camera_angle = result["camera_angle"]
+        session.primary_camera_angle = "face_on"
+        session.video_quality_score = result["video_quality_score"]
+        
+        from backend.core.session import Resolution
+        session.resolution = Resolution(width=result["resolution"]["width"], height=result["resolution"]["height"])
+        session.agent1_notes = result.get("agent1_notes", "Dual video analysis completed")
+        
+    else:
+        # Legacy single video mode
+        video_path = list(input_paths.values())[0]  # Get the first (and only) video
+        
+        try:
+            session_data = analyze_video_intelligence(video_path)
+        except Exception as e:
+            raise RuntimeError("unreadable_video") from e
+
+        agent = VideoIntelligenceAgent()
+        agents_dir = storage.agents_dir(session.session_id)
+        result = await agent.run(session_data, session.session_id, agents_dir)
+
+        session.input_fps = result["input_fps"]
+        session.camera_angle = result["camera_angle"]
+        session.video_quality_score = result["video_quality_score"]
+        
+        # We parse the resolution dict from the raw dict representation
+        from backend.core.session import Resolution
+        session.resolution = Resolution(width=result["resolution"]["width"], height=result["resolution"]["height"])
+        session.agent1_notes = result["agent1_notes"]
 
     return session
 
@@ -194,11 +261,27 @@ async def _phase1_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
     """Implement Phase 1 — Hit Detection."""
     from backend.phase1.hit_detector import run_hit_detection
 
-    d = storage.session_dir(session.session_id)
-    videos = list(d.glob("input.*"))
-    if not videos:
+    # Get input video paths
+    input_paths = storage.get_input_video_paths(session.session_id)
+    
+    if not input_paths:
         raise FileNotFoundError(f"Input video not found for {session.session_id}")
-    video_path = videos[0]
+    
+    if storage.is_dual_video_session(session.session_id):
+        # For dual video mode, use the primary camera angle (face-on by default)
+        # This can be made configurable based on requirements
+        primary_angle = getattr(session, "primary_camera_angle", "face_on")
+        
+        if primary_angle == "face_on" and "face_on" in input_paths:
+            video_path = input_paths["face_on"]
+        elif primary_angle == "down_the_line" and "down_the_line" in input_paths:
+            video_path = input_paths["down_the_line"]
+        else:
+            # Fallback to any available video
+            video_path = list(input_paths.values())[0]
+    else:
+        # Legacy single video mode
+        video_path = list(input_paths.values())[0]
 
     result = run_hit_detection(video_path)
 
@@ -220,12 +303,27 @@ async def _agent2_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
     """Implement Agent 2 — Body Calibration."""
     from backend.agents.body_calibration_agent import BodyCalibrationAgent, extract_address_measurements
 
-    d = storage.session_dir(session.session_id)
-    videos = list(d.glob("input.*"))
-    if not videos or not session.address_frame_range:
+    # Get input video paths
+    input_paths = storage.get_input_video_paths(session.session_id)
+    
+    if not input_paths or not session.address_frame_range:
         return session
     
-    measurements = extract_address_measurements(videos[0], session.address_frame_range)
+    if storage.is_dual_video_session(session.session_id):
+        # For dual video mode, use the primary camera angle for calibration
+        primary_angle = getattr(session, "primary_camera_angle", "face_on")
+        
+        if primary_angle == "face_on" and "face_on" in input_paths:
+            video_path = input_paths["face_on"]
+        elif primary_angle == "down_the_line" and "down_the_line" in input_paths:
+            video_path = input_paths["down_the_line"]
+        else:
+            video_path = list(input_paths.values())[0]
+    else:
+        # Legacy single video mode
+        video_path = list(input_paths.values())[0]
+    
+    measurements = extract_address_measurements(video_path, session.address_frame_range)
     measurements["gender"] = session.gender
     measurements["camera_angle"] = getattr(session, "camera_angle", "unknown")
 
@@ -242,14 +340,29 @@ async def _phase2_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
     """Implement Phase 2 — Keypoints."""
     from backend.phase2.keypoints import extract_keypoints
 
-    d = storage.session_dir(session.session_id)
-    videos = list(d.glob("input.*"))
-    if not videos or session.backswing_start_frame_index is None or session.follow_through_end_frame_index is None:
+    # Get input video paths
+    input_paths = storage.get_input_video_paths(session.session_id)
+    
+    if not input_paths or session.backswing_start_frame_index is None or session.follow_through_end_frame_index is None:
         return session
+
+    if storage.is_dual_video_session(session.session_id):
+        # For dual video mode, use the primary camera angle for keypoint extraction
+        primary_angle = getattr(session, "primary_camera_angle", "face_on")
+        
+        if primary_angle == "face_on" and "face_on" in input_paths:
+            video_path = input_paths["face_on"]
+        elif primary_angle == "down_the_line" and "down_the_line" in input_paths:
+            video_path = input_paths["down_the_line"]
+        else:
+            video_path = list(input_paths.values())[0]
+    else:
+        # Legacy single video mode
+        video_path = list(input_paths.values())[0]
 
     out_pq = storage.session_dir(session.session_id) / "keypoints.parquet"
     extract_keypoints(
-        videos[0],
+        video_path,
         out_pq,
         session.backswing_start_frame_index,
         session.follow_through_end_frame_index
@@ -339,9 +452,47 @@ async def _agent4_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
 
 
 async def _phase5_stub(session: SessionJSON, storage: LocalStorage) -> SessionJSON:
-    """Implement Phase 5 — Performance Scoring."""
+    """Implement Phase 5 — Performance Scoring.
+    
+    Compares all metrics against Agent 4 thresholds to produce:
+    - Per-metric scores (band + score value)
+    - Overall score (0-100)
+    - Overall band (Beginner/Developing/Proficient)
+    
+    Requires:
+      - session.metrics (from Phase 4)
+      - session.active_thresholds (from Agent 4)
+    
+    Produces:
+      - session.scores (Scores object with per_metric and overall)
+      - session.timings.phase5_ms
+    """
     from backend.phase5.scoring import score_metrics
-    session.scores = score_metrics(session)
+
+    start_time = time.monotonic()
+    
+    try:
+        session.scores = score_metrics(session)
+        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        session.timings.phase5_ms = elapsed_ms
+        
+        if session.scores and session.scores.overall is not None:
+            log_event(
+                logger,
+                f"Phase 5 complete (score: {session.scores.overall:.1f} / {session.scores.band_overall}, {elapsed_ms}ms)",
+                session_id=session.session_id,
+                phase="phase5",
+                duration_ms=elapsed_ms,
+                score=session.scores.overall,
+                band=session.scores.band_overall,
+            )
+        else:
+            logger.warning(f"Phase 5 produced no score")
+            
+    except Exception as e:
+        logger.error(f"Phase 5 failed: {e}")
+        session.scores = None
+    
     return session
 
 
@@ -369,54 +520,339 @@ async def _agent5_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
 
 
 async def _phase7_stub(session: SessionJSON, storage: LocalStorage) -> SessionJSON:
-    """Implement Phase 7 — Slow-Motion Rendering."""
-    from backend.phase7.slowmo import render_slowmo
+    """Implement Phase 7 — Enhanced Slow-Motion Rendering.
     
-    d = storage.session_dir(session.session_id)
-    videos = list(d.glob("input.*"))
-    if not videos or session.backswing_start_frame_index is None or session.follow_through_end_frame_index is None:
+    Supports both single and dual video processing with enhanced features:
+    - 8× frame duplication (0.125× speed) for ultra-slow motion
+    - 90fps output support
+    - Adaptive quality settings
+    - Parallel processing for dual camera angles
+    """
+    from backend.phase7.slowmo import render_slowmo, render_dual_slowmo, SlowmoConfig
+    
+    # Check if we have the required frame indices
+    if session.backswing_start_frame_index is None or session.follow_through_end_frame_index is None:
+        logger.warning(f"Phase 7 skipped: missing frame indices for {session.session_id}")
         return session
-        
-    out_vid = d / "slowmo.mp4"
-    fps = getattr(session, "input_fps", 30.0) or 30.0
     
-    success = render_slowmo(
-        videos[0],
-        out_vid,
-        session.backswing_start_frame_index,
-        session.follow_through_end_frame_index,
-        fps
+    # Get input video paths
+    input_paths = storage.get_input_video_paths(session.session_id)
+    if not input_paths:
+        logger.warning(f"Phase 7 skipped: no input videos found for {session.session_id}")
+        return session
+    
+    # Create enhanced slowmo configuration
+    config = SlowmoConfig(
+        duplication_factor=8,  # 0.125× speed (8× slower than original 4×)
+        enable_90fps=True,  # Enable 90fps output support
+        quality_preset="high",  # High quality for better results
+        enable_interpolation=False,  # Can be enabled for even smoother motion
     )
     
-    if success:
-        session.slowmo_video_path = f"/api/session/{session.session_id}/video/slowmo"
+    session_dir = storage.session_dir(session.session_id)
+    
+    if storage.is_dual_video_session(session.session_id):
+        # Dual video processing
+        logger.info(f"Processing dual video slowmo for session {session.session_id}")
         
+        if "face_on" not in input_paths or "down_the_line" not in input_paths:
+            logger.error(f"Dual video session missing required videos for {session.session_id}")
+            return session
+        
+        # Prepare output paths
+        face_on_output = session_dir / "slowmo_face_on.mp4"
+        dtl_output = session_dir / "slowmo_down_the_line.mp4"
+        
+        # Get FPS for each video
+        face_on_fps = getattr(session.dual_video_metadata, "face_on_fps", None) if session.dual_video_metadata else None
+        dtl_fps = getattr(session.dual_video_metadata, "down_the_line_fps", None) if session.dual_video_metadata else None
+        
+        # Fallback to session fps if dual metadata not available
+        if face_on_fps is None:
+            face_on_fps = getattr(session, "input_fps", 30.0) or 30.0
+        if dtl_fps is None:
+            dtl_fps = getattr(session, "input_fps", 30.0) or 30.0
+        
+        # Render both videos in parallel
+        face_on_success, dtl_success = await render_dual_slowmo(
+            input_paths["face_on"],
+            input_paths["down_the_line"],
+            face_on_output,
+            dtl_output,
+            session.backswing_start_frame_index,
+            session.follow_through_end_frame_index,
+            face_on_fps,
+            dtl_fps,
+            config
+        )
+        
+        # Update session with results
+        if face_on_success:
+            session.slowmo_face_on_path = f"/api/output/{session.session_id}/slowmo/face-on"
+            logger.info(f"Face-on slowmo completed: {face_on_output}")
+        
+        if dtl_success:
+            session.slowmo_down_the_line_path = f"/api/output/{session.session_id}/slowmo/down-the-line"
+            logger.info(f"Down-the-line slowmo completed: {dtl_output}")
+        
+        # Set legacy path to primary angle for backward compatibility
+        primary_angle = getattr(session, "primary_camera_angle", "face_on")
+        if primary_angle == "face_on" and face_on_success:
+            session.slowmo_video_path = session.slowmo_face_on_path
+        elif primary_angle == "down_the_line" and dtl_success:
+            session.slowmo_video_path = session.slowmo_down_the_line_path
+        elif face_on_success:
+            session.slowmo_video_path = session.slowmo_face_on_path
+        elif dtl_success:
+            session.slowmo_video_path = session.slowmo_down_the_line_path
+        
+        logger.info(
+            f"Dual slowmo processing complete: face_on={face_on_success}, dtl={dtl_success}",
+            extra={
+                "phase": "phase7",
+                "event": "dual_slowmo_pipeline_complete",
+                "face_on_success": face_on_success,
+                "dtl_success": dtl_success,
+            }
+        )
+        
+    else:
+        # Single video processing (legacy + single-with-angle)
+        logger.info(f"Processing single video slowmo for session {session.session_id}")
+        
+        video_path = list(input_paths.values())[0]
+        fps = getattr(session, "input_fps", 30.0) or 30.0
+        
+        # Determine output path based on camera angle
+        camera_angle = getattr(session, "camera_angle", None)
+        if camera_angle == "face_on":
+            output_path = session_dir / "slowmo_face_on.mp4"
+        elif camera_angle == "down_the_line":
+            output_path = session_dir / "slowmo_down_the_line.mp4"
+        else:
+            # Legacy single video
+            output_path = session_dir / "slowmo.mp4"
+        
+        success = render_slowmo(
+            video_path,
+            output_path,
+            session.backswing_start_frame_index,
+            session.follow_through_end_frame_index,
+            fps,
+            config
+        )
+        
+        if success:
+            # Set appropriate session paths
+            if camera_angle == "face_on":
+                session.slowmo_face_on_path = f"/api/output/{session.session_id}/slowmo/face-on"
+                session.slowmo_video_path = session.slowmo_face_on_path
+            elif camera_angle == "down_the_line":
+                session.slowmo_down_the_line_path = f"/api/output/{session.session_id}/slowmo/down-the-line"
+                session.slowmo_video_path = session.slowmo_down_the_line_path
+            else:
+                # Legacy path
+                session.slowmo_video_path = f"/api/output/{session.session_id}/slowmo"
+            
+            logger.info(f"Single slowmo completed: {output_path}")
+        else:
+            logger.error(f"Single slowmo failed for {session.session_id}")
+    
     return session
 
 
 async def _phase8_stub(session: SessionJSON, storage: LocalStorage) -> SessionJSON:
-    """Implement Phase 8 — Annotated Video Overlay."""
-    from backend.phase8.overlay import render_overlay
-
-    d = storage.session_dir(session.session_id)
-    videos = list(d.glob("input.*"))
-    if not videos or session.backswing_start_frame_index is None or session.follow_through_end_frame_index is None:
-        return session
-        
-    out_vid = d / "annotated.mp4"
-    out_pq = d / "keypoints.parquet"
+    """Implement Phase 8 — Annotated Video Overlay with Dual Camera Support.
     
-    success = render_overlay(
-        videos[0],
-        out_vid,
-        out_pq,
-        session.backswing_start_frame_index,
-        session.follow_through_end_frame_index
+    Enhanced to support both single and dual video processing:
+    - Single video: Renders one annotated video based on camera angle
+    - Dual video: Renders both face-on and down-the-line annotated videos in parallel
+    
+    Reads:
+      - slowmo video(s) from Phase 7
+      - keypoints from Phase 2
+      - metrics from Phase 4
+      - thresholds from Agent 4
+    
+    Writes:
+      - annotated_video_path (legacy)
+      - annotated_face_on_path (dual mode)
+      - annotated_down_the_line_path (dual mode)
+      - Timing: phase8_ms
+    """
+    from backend.phase8.overlay import render_overlay, render_dual_overlay, OverlayConfig
+
+    session_dir = storage.session_dir(session.session_id)
+    
+    # Check prerequisites
+    if session.backswing_start_frame_index is None or session.follow_through_end_frame_index is None:
+        logger.warning(f"Phase 8 skipped: missing frame indices for {session.session_id}")
+        return session
+    
+    # Get keypoints parquet path
+    keypoints_pq = session_dir / "keypoints.parquet"
+    if not keypoints_pq.exists():
+        logger.warning(f"Phase 8 skipped: keypoints.parquet not found for {session.session_id}")
+        return session
+    
+    # Create overlay configuration
+    config = OverlayConfig(
+        show_skeleton=True,
+        show_joint_dots=True,
+        show_angle_overlays=True,
+        show_hud=True,
+        show_phase_label=True,
+        angle_specific_styling=True,
     )
     
-    if success:
-        session.annotated_video_path = f"/api/session/{session.session_id}/video/annotated"
-    else:
-        session.overlay_rendering_failed = True
+    start_time = time.monotonic()
+    
+    if storage.is_dual_video_session(session.session_id):
+        # Dual video processing
+        logger.info(f"Processing dual video overlay for session {session.session_id}")
         
+        # Check for slowmo videos
+        face_on_slowmo = session_dir / "slowmo_face_on.mp4"
+        dtl_slowmo = session_dir / "slowmo_down_the_line.mp4"
+        
+        if not face_on_slowmo.exists() or not dtl_slowmo.exists():
+            logger.warning(f"Phase 8 skipped: missing slowmo videos (face_on={face_on_slowmo.exists()}, dtl={dtl_slowmo.exists()})")
+            return session
+        
+        # Prepare output paths
+        face_on_output = session_dir / "annotated_face_on.mp4"
+        dtl_output = session_dir / "annotated_down_the_line.mp4"
+        
+        try:
+            # Render both overlays in parallel
+            face_on_success, dtl_success = await render_dual_overlay(
+                face_on_slowmo=face_on_slowmo,
+                down_the_line_slowmo=dtl_slowmo,
+                face_on_output=face_on_output,
+                down_the_line_output=dtl_output,
+                keypoints_parquet=keypoints_pq,
+                session_json=session,
+                start_frame=session.backswing_start_frame_index,
+                end_frame=session.follow_through_end_frame_index,
+                config=config
+            )
+            
+            # Update session with results
+            if face_on_success and face_on_output.exists():
+                session.annotated_face_on_path = f"/api/output/{session.session_id}/annotated/face-on"
+                logger.info(f"Face-on annotated video completed: {face_on_output}")
+            
+            if dtl_success and dtl_output.exists():
+                session.annotated_down_the_line_path = f"/api/output/{session.session_id}/annotated/down-the-line"
+                logger.info(f"Down-the-line annotated video completed: {dtl_output}")
+            
+            # Set legacy path to primary angle for backward compatibility
+            primary_angle = getattr(session, "primary_camera_angle", "face_on")
+            if primary_angle == "face_on" and face_on_success:
+                session.annotated_video_path = session.annotated_face_on_path
+            elif primary_angle == "down_the_line" and dtl_success:
+                session.annotated_video_path = session.annotated_down_the_line_path
+            elif face_on_success:
+                session.annotated_video_path = session.annotated_face_on_path
+            elif dtl_success:
+                session.annotated_video_path = session.annotated_down_the_line_path
+            
+            # Log results
+            total_size = 0
+            if face_on_output.exists():
+                total_size += face_on_output.stat().st_size
+            if dtl_output.exists():
+                total_size += dtl_output.stat().st_size
+            
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
+            session.timings.phase8_ms = elapsed_ms
+            
+            if face_on_success or dtl_success:
+                log_event(
+                    logger,
+                    f"Dual overlay complete: face_on={face_on_success}, dtl={dtl_success} ({elapsed_ms}ms, {total_size / 1_000_000:.1f}MB)",
+                    session_id=session.session_id,
+                    phase="phase8",
+                    duration_ms=elapsed_ms,
+                    face_on_success=face_on_success,
+                    dtl_success=dtl_success,
+                )
+            else:
+                logger.error(f"Phase 8 dual overlay failed completely")
+                session.overlay_rendering_failed = True
+        
+        except Exception as e:
+            logger.error(f"Phase 8 dual overlay failed: {e}")
+            session.overlay_rendering_failed = True
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
+            session.timings.phase8_ms = elapsed_ms
+    
+    else:
+        # Single video processing (legacy + single-with-angle)
+        logger.info(f"Processing single video overlay for session {session.session_id}")
+        
+        # Determine camera angle and paths
+        camera_angle = getattr(session, "camera_angle", "face_on")
+        
+        if camera_angle == "face_on":
+            slowmo_video = session_dir / "slowmo_face_on.mp4"
+            annotated_out = session_dir / "annotated_face_on.mp4"
+        elif camera_angle == "down_the_line":
+            slowmo_video = session_dir / "slowmo_down_the_line.mp4"
+            annotated_out = session_dir / "annotated_down_the_line.mp4"
+        else:
+            # Legacy single video
+            slowmo_video = session_dir / "slowmo.mp4"
+            annotated_out = session_dir / "annotated.mp4"
+        
+        if not slowmo_video.exists():
+            logger.warning(f"Phase 8 skipped: slowmo video not found ({slowmo_video})")
+            return session
+        
+        try:
+            # Render single overlay
+            success = render_overlay(
+                input_video=slowmo_video,
+                output_video=annotated_out,
+                keypoints_parquet=keypoints_pq,
+                session_json=session,
+                start_frame=session.backswing_start_frame_index,
+                end_frame=session.follow_through_end_frame_index,
+                camera_angle=camera_angle,
+                config=config
+            )
+            
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
+            session.timings.phase8_ms = elapsed_ms
+            
+            if success and annotated_out.exists():
+                # Set appropriate session paths
+                if camera_angle == "face_on":
+                    session.annotated_face_on_path = f"/api/output/{session.session_id}/annotated/face-on"
+                    session.annotated_video_path = session.annotated_face_on_path
+                elif camera_angle == "down_the_line":
+                    session.annotated_down_the_line_path = f"/api/output/{session.session_id}/annotated/down-the-line"
+                    session.annotated_video_path = session.annotated_down_the_line_path
+                else:
+                    # Legacy path
+                    session.annotated_video_path = f"/api/output/{session.session_id}/annotated"
+                
+                log_event(
+                    logger,
+                    f"Single overlay complete ({camera_angle}): {elapsed_ms}ms, {annotated_out.stat().st_size / 1_000_000:.1f}MB",
+                    session_id=session.session_id,
+                    phase="phase8",
+                    duration_ms=elapsed_ms,
+                    camera_angle=camera_angle,
+                )
+            else:
+                logger.error(f"Phase 8 single overlay failed for {camera_angle}")
+                session.overlay_rendering_failed = True
+        
+        except Exception as e:
+            logger.error(f"Phase 8 single overlay failed: {e}")
+            session.overlay_rendering_failed = True
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
+            session.timings.phase8_ms = elapsed_ms
+    
     return session

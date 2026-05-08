@@ -20,6 +20,29 @@ from pydantic import BaseModel, Field
 # ─── Sub-models ──────────────────────────────────────────────────────────────
 
 
+class DualVideoMetadata(BaseModel):
+    """Metadata for dual video inputs."""
+    
+    face_on_fps: float | None = None
+    down_the_line_fps: float | None = None
+    face_on_resolution: Resolution | None = None
+    down_the_line_resolution: Resolution | None = None
+    face_on_quality_score: float | None = None
+    down_the_line_quality_score: float | None = None
+    face_on_duration_seconds: float | None = None
+    down_the_line_duration_seconds: float | None = None
+
+
+class DualVideoProcessingStatus(BaseModel):
+    """Processing status for dual video workflow."""
+    
+    face_on_uploaded: bool = False
+    down_the_line_uploaded: bool = False
+    face_on_processing_complete: bool = False
+    down_the_line_processing_complete: bool = False
+    dual_processing_mode: bool = False
+
+
 class Resolution(BaseModel):
     """Video resolution."""
 
@@ -186,6 +209,11 @@ class SessionJSON(BaseModel):
     video_quality_score: float | None = None
     resolution: Resolution | None = None
     agent1_notes: str | None = None
+    
+    # ── Dual Video Support (Phase 2+) ────────────────────────────────
+    dual_video_metadata: DualVideoMetadata | None = None
+    dual_video_status: DualVideoProcessingStatus | None = None
+    primary_camera_angle: Literal["face_on", "down_the_line"] | None = None
 
     # ── Set by Phase 1 (Hit Detection) ───────────────────────────────
     total_swing_attempts: int | None = None
@@ -227,10 +255,18 @@ class SessionJSON(BaseModel):
 
     # ── Set by Phase 7 ───────────────────────────────────────────────
     slowmo_video_path: str | None = None
+    
+    # ── Dual Video Output Paths (Phase 2+) ───────────────────────────
+    slowmo_face_on_path: str | None = None
+    slowmo_down_the_line_path: str | None = None
 
     # ── Set by Phase 8 ───────────────────────────────────────────────
     annotated_video_path: str | None = None
     overlay_rendering_failed: bool = False
+    
+    # ── Dual Video Annotated Paths (Phase 2+) ────────────────────────
+    annotated_face_on_path: str | None = None
+    annotated_down_the_line_path: str | None = None
 
     # ── Observability ────────────────────────────────────────────────
     timings: Timings = Field(default_factory=Timings)
@@ -247,6 +283,21 @@ def create_session(gender: Literal["male", "female"]) -> SessionJSON:
         session_id, the current UTC time, and the given gender.
     """
     return SessionJSON(gender=gender)
+
+
+def create_dual_video_session(gender: Literal["male", "female"]) -> SessionJSON:
+    """Create a new session configured for dual video processing.
+
+    Args:
+        gender: The golfer's gender selection.
+
+    Returns:
+        A ``SessionJSON`` initialised for dual video workflow.
+    """
+    session = SessionJSON(gender=gender)
+    session.dual_video_status = DualVideoProcessingStatus(dual_processing_mode=True)
+    session.dual_video_metadata = DualVideoMetadata()
+    return session
 
 
 def get_progress_pct(status: str) -> int:

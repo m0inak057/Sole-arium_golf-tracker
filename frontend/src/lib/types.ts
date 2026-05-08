@@ -76,6 +76,25 @@ export interface Timings {
 
 // ─── Main session type ──────────────────────────────────────────────────────
 
+export interface DualVideoMetadata {
+  face_on_fps?: number;
+  down_the_line_fps?: number;
+  face_on_resolution?: Resolution;
+  down_the_line_resolution?: Resolution;
+  face_on_quality_score?: number;
+  down_the_line_quality_score?: number;
+  face_on_duration_seconds?: number;
+  down_the_line_duration_seconds?: number;
+}
+
+export interface DualVideoProcessingStatus {
+  face_on_uploaded: boolean;
+  down_the_line_uploaded: boolean;
+  face_on_processing_complete: boolean;
+  down_the_line_processing_complete: boolean;
+  dual_processing_mode: boolean;
+}
+
 export interface SessionJSON {
   // Set by API on upload
   schema_version: string;
@@ -91,6 +110,11 @@ export interface SessionJSON {
   video_quality_score: number | null;
   resolution: Resolution | null;
   agent1_notes: string | null;
+
+  // Dual Video Support
+  dual_video_metadata: DualVideoMetadata | null;
+  dual_video_status: DualVideoProcessingStatus | null;
+  primary_camera_angle: "face_on" | "down_the_line" | null;
 
   // Set by Phase 1
   total_swing_attempts: number | null;
@@ -132,10 +156,14 @@ export interface SessionJSON {
 
   // Set by Phase 7
   slowmo_video_path: string | null;
+  slowmo_face_on_path: string | null;
+  slowmo_down_the_line_path: string | null;
 
   // Set by Phase 8
   annotated_video_path: string | null;
   overlay_rendering_failed: boolean;
+  annotated_face_on_path: string | null;
+  annotated_down_the_line_path: string | null;
 
   // Observability
   timings: Timings;
