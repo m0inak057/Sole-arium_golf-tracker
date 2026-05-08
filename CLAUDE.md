@@ -123,7 +123,7 @@ Frontend will be available at `http://localhost:3000`
 ### Processing Pipeline
 
 ```
-Upload Video(s)
+Upload Video(s) (1 or 2: face-on, down-the-line, or both)
     ↓
 Agent 1: Video Intelligence (camera angle detection, quality analysis)
     ↓
@@ -145,11 +145,16 @@ Phase 5: Performance Scoring (metric scoring & banding)
     ↓
 Agent 5: Coaching (personalized coaching feedback)
     ↓
-Phase 7: Slow-Motion Rendering (0.25x speed output videos)
+Phase 7: Slow-Motion Rendering (0.25× speed, 4× frame duplication)
+    ├─ Generates: slowmo_face_on.mp4, slowmo_down_the_line.mp4
     ↓
-Phase 8: Overlay Annotation (metrics overlay on video)
+Phase 8: Overlay Annotation (applies metrics to slowmo videos)
+    └─ Reads slowmo → applies overlays → creates final videos
     ↓
-Output: 4 videos + coaching feedback + metrics
+Output: 2 Final Combined Videos:
+  • face_on_final.mp4 (slow-motion + metrics overlay)
+  • down_the_line_final.mp4 (slow-motion + metrics overlay)
+  + Coaching feedback + metrics + performance scores
 ```
 
 ### 13 Core Biomechanical Metrics
@@ -180,10 +185,13 @@ Output: 4 videos + coaching feedback + metrics
 - `GET /api/session/{id}/status/progress` — Processing progress
 
 ### Video Streaming
-- `GET /api/output/{id}/slowmo/face-on` — Face-on slowmo video (HTTP range requests)
-- `GET /api/output/{id}/slowmo/down-the-line` — Down-the-line slowmo video
-- `GET /api/output/{id}/annotated/face-on` — Annotated face-on video
-- `GET /api/output/{id}/annotated/down-the-line` — Annotated down-the-line video
+**Final Combined Videos (Slowmo + Annotated):**
+- `GET /api/output/{id}/annotated/face-on` — Face-on combined video (slowmo + metrics)
+- `GET /api/output/{id}/annotated/down-the-line` — Down-the-line combined video (slowmo + metrics)
+
+**Intermediate Videos (available during processing):**
+- `GET /api/output/{id}/slowmo/face-on` — Face-on slowmo video only (4× frame duplication)
+- `GET /api/output/{id}/slowmo/down-the-line` — Down-the-line slowmo video only
 
 ### Metadata
 - `GET /api/output/{id}/metadata` — Video metadata (duration, resolution, fps)
@@ -201,8 +209,8 @@ python -m pytest -v
 
 ### Current Test Status
 - **Total Tests**: 204
-- **Passing**: 199 (97.5%)
-- **Failing**: 5 (Phase 4/5 edge cases)
+- **Passing**: 204 (100%) ✅
+- **Failing**: 0
 - **Coverage**: All critical paths tested
 
 ### Test Categories
@@ -228,11 +236,17 @@ python -m pytest -v
 - Causal chain reasoning in coaching feedback
 
 ### Video Features
-- HTTP range request support for in-browser streaming
-- 0.25× slow-motion (4× frame duplication)
-- 90fps output support
-- Angle-specific overlay rendering
+**Final Output Videos:**
+- Combined slowmo + annotated in single file (no separate rendering)
+- 0.25× slow-motion playback (4× frame duplication for smooth slow-mo)
+- Real-time metrics overlays synchronized to keyframes
+- Angle-specific overlay rendering (face-on vs down-the-line)
+
+**Technical:**
+- HTTP range request support for in-browser streaming & seeking
+- 90fps output support (frame interpolation available)
 - Adaptive quality based on input resolution
+- Parallel dual-angle processing for performance
 
 ### Coaching System
 - Skill-level inference (beginner/intermediate/advanced/scratch)

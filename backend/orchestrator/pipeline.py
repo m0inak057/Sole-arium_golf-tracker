@@ -543,7 +543,7 @@ async def _phase7_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
     
     # Create enhanced slowmo configuration
     config = SlowmoConfig(
-        duplication_factor=8,  # 0.125× speed (8× slower than original 4×)
+        duplication_factor=4,  # 0.25× speed (4× frame duplication)
         enable_90fps=True,  # Enable 90fps output support
         quality_preset="high",  # High quality for better results
         enable_interpolation=False,  # Can be enabled for even smoother motion
