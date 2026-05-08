@@ -554,14 +554,21 @@ async def _phase7_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
     if storage.is_dual_video_session(session.session_id):
         # Dual video processing
         logger.info(f"Processing dual video slowmo for session {session.session_id}")
-        
+        logger.info(f"Phase 7 will create:")
+        logger.info(f"  1. slowmo_face_on.mp4 (Phase 8 will read and apply overlays)")
+        logger.info(f"  2. slowmo_down_the_line.mp4 (Phase 8 will read and apply overlays)")
+
         if "face_on" not in input_paths or "down_the_line" not in input_paths:
             logger.error(f"Dual video session missing required videos for {session.session_id}")
             return session
-        
-        # Prepare output paths
+
+        # Prepare output paths for slowmo videos
         face_on_output = session_dir / "slowmo_face_on.mp4"
         dtl_output = session_dir / "slowmo_down_the_line.mp4"
+
+        logger.info(f"Slowmo output paths:")
+        logger.info(f"  Face-on: {face_on_output}")
+        logger.info(f"  Down-the-line: {dtl_output}")
         
         # Get FPS for each video
         face_on_fps = getattr(session.dual_video_metadata, "face_on_fps", None) if session.dual_video_metadata else None
@@ -574,6 +581,7 @@ async def _phase7_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
             dtl_fps = getattr(session, "input_fps", 30.0) or 30.0
         
         # Render both videos in parallel
+        logger.info(f"Phase 7: Starting slowmo rendering for both angles...")
         face_on_success, dtl_success = await render_dual_slowmo(
             input_paths["face_on"],
             input_paths["down_the_line"],
@@ -585,15 +593,24 @@ async def _phase7_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
             dtl_fps,
             config
         )
-        
+
+        # Verify files were created
+        logger.info(f"Phase 7: Slowmo render results:")
+        logger.info(f"  face_on_success={face_on_success}, file_exists={face_on_output.exists()}, size={face_on_output.stat().st_size if face_on_output.exists() else 0} bytes")
+        logger.info(f"  dtl_success={dtl_success}, file_exists={dtl_output.exists()}, size={dtl_output.stat().st_size if dtl_output.exists() else 0} bytes")
+
         # Update session with results
-        if face_on_success:
+        if face_on_success and face_on_output.exists():
             session.slowmo_face_on_path = f"/api/output/{session.session_id}/slowmo/face-on"
-            logger.info(f"Face-on slowmo completed: {face_on_output}")
-        
-        if dtl_success:
+            logger.info(f"✓ Face-on slowmo completed: {face_on_output}")
+        else:
+            logger.error(f"✗ Face-on slowmo FAILED or file not created")
+
+        if dtl_success and dtl_output.exists():
             session.slowmo_down_the_line_path = f"/api/output/{session.session_id}/slowmo/down-the-line"
-            logger.info(f"Down-the-line slowmo completed: {dtl_output}")
+            logger.info(f"✓ Down-the-line slowmo completed: {dtl_output}")
+        else:
+            logger.error(f"✗ Down-the-line slowmo FAILED or file not created")
         
         # Set legacy path to primary angle for backward compatibility
         primary_angle = getattr(session, "primary_camera_angle", "face_on")
@@ -710,13 +727,19 @@ async def _phase8_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
     if storage.is_dual_video_session(session.session_id):
         # Dual video processing
         logger.info(f"Processing dual video overlay for session {session.session_id}")
-        
-        # Check for slowmo videos
+
+        # Check for slowmo videos from Phase 7
         face_on_slowmo = session_dir / "slowmo_face_on.mp4"
         dtl_slowmo = session_dir / "slowmo_down_the_line.mp4"
-        
+
+        logger.info(f"Phase 8 checking for slowmo videos: face_on={face_on_slowmo.exists()}, dtl={dtl_slowmo.exists()}")
+
         if not face_on_slowmo.exists() or not dtl_slowmo.exists():
-            logger.warning(f"Phase 8 skipped: missing slowmo videos (face_on={face_on_slowmo.exists()}, dtl={dtl_slowmo.exists()})")
+            logger.error(f"Phase 8 FAILED: missing slowmo videos from Phase 7")
+            logger.error(f"  Expected: {face_on_slowmo}")
+            logger.error(f"  Expected: {dtl_slowmo}")
+            logger.error(f"Phase 7 may have failed. Cannot proceed with Phase 8.")
+            session.overlay_rendering_failed = True
             return session
         
         # Prepare output paths
@@ -725,6 +748,14 @@ async def _phase8_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
         
         try:
             # Render both overlays in parallel
+            logger.info(f"Phase 8: Reading slowmo videos and applying overlays...")
+            logger.info(f"  Input (slowmo from Phase 7):")
+            logger.info(f"    Face-on slowmo: {face_on_slowmo}")
+            logger.info(f"    Down-the-line slowmo: {dtl_slowmo}")
+            logger.info(f"  Output (final combined videos):")
+            logger.info(f"    Face-on output: {face_on_output}")
+            logger.info(f"    Down-the-line output: {dtl_output}")
+
             face_on_success, dtl_success = await render_dual_overlay(
                 face_on_slowmo=face_on_slowmo,
                 down_the_line_slowmo=dtl_slowmo,
@@ -736,15 +767,24 @@ async def _phase8_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
                 end_frame=session.follow_through_end_frame_index,
                 config=config
             )
-            
+
+            # Verify final combined videos were created
+            logger.info(f"Phase 8: Overlay render results:")
+            logger.info(f"  face_on_success={face_on_success}, file_exists={face_on_output.exists()}, size={face_on_output.stat().st_size if face_on_output.exists() else 0} bytes")
+            logger.info(f"  dtl_success={dtl_success}, file_exists={dtl_output.exists()}, size={dtl_output.stat().st_size if dtl_output.exists() else 0} bytes")
+
             # Update session with results
             if face_on_success and face_on_output.exists():
                 session.annotated_face_on_path = f"/api/output/{session.session_id}/annotated/face-on"
-                logger.info(f"Face-on annotated video completed: {face_on_output}")
-            
+                logger.info(f"✓ FINAL: Face-on combined video (slowmo + overlay) created: {face_on_output}")
+            else:
+                logger.error(f"✗ FINAL: Face-on combined video FAILED")
+
             if dtl_success and dtl_output.exists():
                 session.annotated_down_the_line_path = f"/api/output/{session.session_id}/annotated/down-the-line"
-                logger.info(f"Down-the-line annotated video completed: {dtl_output}")
+                logger.info(f"✓ FINAL: Down-the-line combined video (slowmo + overlay) created: {dtl_output}")
+            else:
+                logger.error(f"✗ FINAL: Down-the-line combined video FAILED")
             
             # Set legacy path to primary angle for backward compatibility
             primary_angle = getattr(session, "primary_camera_angle", "face_on")
@@ -790,10 +830,10 @@ async def _phase8_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
     else:
         # Single video processing (legacy + single-with-angle)
         logger.info(f"Processing single video overlay for session {session.session_id}")
-        
+
         # Determine camera angle and paths
         camera_angle = getattr(session, "camera_angle", "face_on")
-        
+
         if camera_angle == "face_on":
             slowmo_video = session_dir / "slowmo_face_on.mp4"
             annotated_out = session_dir / "annotated_face_on.mp4"
@@ -804,13 +844,25 @@ async def _phase8_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
             # Legacy single video
             slowmo_video = session_dir / "slowmo.mp4"
             annotated_out = session_dir / "annotated.mp4"
-        
+
+        logger.info(f"Phase 8 checking for slowmo video: {slowmo_video.exists()}")
+        logger.info(f"  Camera angle: {camera_angle}")
+        logger.info(f"  Slowmo input: {slowmo_video}")
+        logger.info(f"  Annotated output: {annotated_out}")
+
         if not slowmo_video.exists():
-            logger.warning(f"Phase 8 skipped: slowmo video not found ({slowmo_video})")
+            logger.error(f"Phase 8 FAILED: slowmo video not found from Phase 7")
+            logger.error(f"  Expected: {slowmo_video}")
+            logger.error(f"Phase 7 may have failed. Cannot proceed with Phase 8.")
+            session.overlay_rendering_failed = True
             return session
         
         try:
-            # Render single overlay
+            # Render single overlay from slowmo video
+            logger.info(f"Phase 8: Reading slowmo video and applying overlay...")
+            logger.info(f"  Input (slowmo from Phase 7): {slowmo_video}")
+            logger.info(f"  Output (final combined video): {annotated_out}")
+
             success = render_overlay(
                 input_video=slowmo_video,
                 output_video=annotated_out,
@@ -821,11 +873,15 @@ async def _phase8_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
                 camera_angle=camera_angle,
                 config=config
             )
-            
+
             elapsed_ms = int((time.monotonic() - start_time) * 1000)
             session.timings.phase8_ms = elapsed_ms
-            
+
+            # Verify final combined video was created
             if success and annotated_out.exists():
+                size_mb = annotated_out.stat().st_size / 1_000_000
+                logger.info(f"✓ FINAL: Combined video created: {annotated_out} ({size_mb:.1f}MB)")
+
                 # Set appropriate session paths
                 if camera_angle == "face_on":
                     session.annotated_face_on_path = f"/api/output/{session.session_id}/annotated/face-on"
@@ -836,17 +892,18 @@ async def _phase8_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
                 else:
                     # Legacy path
                     session.annotated_video_path = f"/api/output/{session.session_id}/annotated"
-                
+
                 log_event(
                     logger,
-                    f"Single overlay complete ({camera_angle}): {elapsed_ms}ms, {annotated_out.stat().st_size / 1_000_000:.1f}MB",
+                    f"✓ Single overlay complete ({camera_angle}): {elapsed_ms}ms, {size_mb:.1f}MB",
                     session_id=session.session_id,
                     phase="phase8",
                     duration_ms=elapsed_ms,
                     camera_angle=camera_angle,
                 )
             else:
-                logger.error(f"Phase 8 single overlay failed for {camera_angle}")
+                logger.error(f"✗ Phase 8 FAILED: combined video not created for {camera_angle}")
+                logger.error(f"  success={success}, file_exists={annotated_out.exists()}")
                 session.overlay_rendering_failed = True
         
         except Exception as e:
