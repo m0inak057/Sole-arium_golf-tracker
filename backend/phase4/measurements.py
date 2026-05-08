@@ -251,12 +251,15 @@ def _compute_hip_sway(df: pd.DataFrame | None, address_frame_range: list[int] | 
     return MetricEntry(value=round(max_sway_px * scale, 1), unit="inches", primary=True)
 
 
-def _compute_head_sway(df: pd.DataFrame, address_frame_range: list[int] | None, scale: float) -> MetricEntry:
+def _compute_head_sway(df: pd.DataFrame | None, address_frame_range: list[int] | None, scale: float) -> MetricEntry:
     """Metric 5: Head sway — max horizontal delta of nose from address."""
     if not address_frame_range or len(address_frame_range) < 2:
         return MetricEntry(
             value=None, unit="inches", primary=True, null_reason="Address frames unavailable"
         )
+
+    if df is None:
+        return MetricEntry(value=None, unit="inches", primary=True, null_reason="Keypoint data missing")
 
     addr_df = get_frame_subset(df, address_frame_range[0], address_frame_range[1])
     nose_addr = addr_df[
@@ -286,10 +289,13 @@ def _compute_head_sway(df: pd.DataFrame, address_frame_range: list[int] | None, 
     return MetricEntry(value=round(max_sway_px * scale, 1), unit="inches", primary=True)
 
 
-def _compute_hip_turn(df: pd.DataFrame, address_frame_range: list[int] | None, impact_frame: int | None) -> MetricEntry:
+def _compute_hip_turn(df: pd.DataFrame | None, address_frame_range: list[int] | None, impact_frame: int | None) -> MetricEntry:
     """Metric 6: Hip turn — rotation of hip-line from address to impact."""
     if not address_frame_range or not impact_frame:
         return MetricEntry(value=None, unit="deg", primary=True, null_reason="Swing bounds missing")
+
+    if df is None:
+        return MetricEntry(value=None, unit="deg", primary=True, null_reason="Keypoint data missing")
 
     # Hip-line angle at address
     addr_df = get_frame_subset(df, address_frame_range[0], address_frame_range[1])
@@ -323,10 +329,13 @@ def _compute_hip_turn(df: pd.DataFrame, address_frame_range: list[int] | None, i
     return MetricEntry(value=delta_angle, unit="deg", primary=True)
 
 
-def _compute_shoulder_turn(df: pd.DataFrame, address_frame_range: list[int] | None, impact_frame: int | None) -> MetricEntry:
+def _compute_shoulder_turn(df: pd.DataFrame | None, address_frame_range: list[int] | None, impact_frame: int | None) -> MetricEntry:
     """Metric 7: Shoulder turn — rotation of shoulder-line from address to impact."""
     if not address_frame_range or not impact_frame:
         return MetricEntry(value=None, unit="deg", primary=True, null_reason="Swing bounds missing")
+
+    if df is None:
+        return MetricEntry(value=None, unit="deg", primary=True, null_reason="Keypoint data missing")
 
     # Shoulder-line angle at address
     addr_df = get_frame_subset(df, address_frame_range[0], address_frame_range[1])
@@ -362,10 +371,13 @@ def _compute_shoulder_turn(df: pd.DataFrame, address_frame_range: list[int] | No
     return MetricEntry(value=delta_angle, unit="deg", primary=True)
 
 
-def _compute_x_factor(df: pd.DataFrame, bs_start: int | None, impact_frame: int | None) -> MetricEntry:
+def _compute_x_factor(df: pd.DataFrame | None, bs_start: int | None, impact_frame: int | None) -> MetricEntry:
     """Metric 2: X-factor — angle between hip-line and shoulder-line vectors."""
     if not bs_start or not impact_frame or impact_frame <= bs_start:
         return MetricEntry(value=None, unit="deg", primary=True, null_reason="Swing bounds missing")
+
+    if df is None:
+        return MetricEntry(value=None, unit="deg", primary=True, null_reason="Keypoint data missing")
 
     # Use median positions during backswing for stability
     bs_df = get_frame_subset(df, bs_start, impact_frame)
@@ -410,10 +422,13 @@ def _compute_x_factor(df: pd.DataFrame, bs_start: int | None, impact_frame: int 
     return MetricEntry(value=x_factor, unit="deg", primary=True)
 
 
-def _compute_spine_deviation_max(df: pd.DataFrame, address_frame_range: list[int] | None, bs_start: int | None, impact_frame: int | None) -> MetricEntry:
+def _compute_spine_deviation_max(df: pd.DataFrame | None, address_frame_range: list[int] | None, bs_start: int | None, impact_frame: int | None) -> MetricEntry:
     """Metric 3: Spine deviation max — max delta of spine angle from address."""
     if not address_frame_range or not bs_start or not impact_frame:
         return MetricEntry(value=None, unit="deg", primary=True, null_reason="Frame indices missing")
+
+    if df is None:
+        return MetricEntry(value=None, unit="deg", primary=True, null_reason="Keypoint data missing")
 
     # Spine angle at address (right shoulder to right hip)
     addr_df = get_frame_subset(df, address_frame_range[0], address_frame_range[1])
@@ -452,10 +467,13 @@ def _compute_spine_deviation_max(df: pd.DataFrame, address_frame_range: list[int
     return MetricEntry(value=round(max_deviation, 1), unit="deg", primary=True)
 
 
-def _compute_side_bend(df: pd.DataFrame, bs_start: int | None, impact_frame: int | None) -> MetricEntry:
+def _compute_side_bend(df: pd.DataFrame | None, bs_start: int | None, impact_frame: int | None) -> MetricEntry:
     """Metric 8: Side bend — lateral tilt of torso from vertical."""
     if not bs_start or not impact_frame:
         return MetricEntry(value=None, unit="deg", primary=True, null_reason="Swing bounds missing")
+
+    if df is None:
+        return MetricEntry(value=None, unit="deg", primary=True, null_reason="Keypoint data missing")
 
     # Use median torso position during backswing
     bs_df = get_frame_subset(df, bs_start, impact_frame)
@@ -488,10 +506,13 @@ def _compute_side_bend(df: pd.DataFrame, bs_start: int | None, impact_frame: int
     return MetricEntry(value=side_bend, unit="deg", primary=True)
 
 
-def _compute_hips_open(df: pd.DataFrame, impact_frame: int | None) -> MetricEntry:
+def _compute_hips_open(df: pd.DataFrame | None, impact_frame: int | None) -> MetricEntry:
     """Metric 9: Hips open — hip rotation angle at impact."""
     if not impact_frame:
         return MetricEntry(value=None, unit="deg", primary=True, null_reason="Impact frame missing")
+
+    if df is None:
+        return MetricEntry(value=None, unit="deg", primary=True, null_reason="Keypoint data missing")
 
     l_hip = get_frame_landmark(df, impact_frame, "left_hip")
     r_hip = get_frame_landmark(df, impact_frame, "right_hip")
@@ -510,12 +531,15 @@ def _compute_hips_open(df: pd.DataFrame, impact_frame: int | None) -> MetricEntr
     return MetricEntry(value=round(angle, 1), unit="deg", primary=True)
 
 
-def _compute_wrist_lag(df: pd.DataFrame, impact_frame: int | None) -> MetricEntry:
+def _compute_wrist_lag(df: pd.DataFrame | None, impact_frame: int | None) -> MetricEntry:
     """Metric 10: Wrist lag — angle at wrist between forearm and club-shaft (lead wrist only)."""
     if not impact_frame:
         return MetricEntry(
             value=None, unit="deg", primary=False, null_reason="Impact frame missing"
         )
+
+    if df is None:
+        return MetricEntry(value=None, unit="deg", primary=False, null_reason="Keypoint data missing")
 
     # Lead wrist (left for right-handed golfer): left_shoulder, left_elbow, left_wrist
     l_sh = get_frame_landmark(df, impact_frame, "left_shoulder")
@@ -538,10 +562,13 @@ def _compute_wrist_lag(df: pd.DataFrame, impact_frame: int | None) -> MetricEntr
     return MetricEntry(value=round(angle, 1), unit="deg", primary=False)
 
 
-def _compute_knee_flex_left(df: pd.DataFrame, bs_start: int | None, ftx_end: int | None) -> MetricEntry:
+def _compute_knee_flex_left(df: pd.DataFrame | None, bs_start: int | None, ftx_end: int | None) -> MetricEntry:
     """Metric 11: Knee flex left — angle at left knee during swing."""
     if not bs_start or not ftx_end:
         return MetricEntry(value=None, unit="deg", primary=True, null_reason="Swing bounds missing")
+
+    if df is None:
+        return MetricEntry(value=None, unit="deg", primary=True, null_reason="Keypoint data missing")
 
     # Use median angle during swing for stability
     swing_df = get_frame_subset(df, bs_start, ftx_end)
@@ -574,10 +601,13 @@ def _compute_knee_flex_left(df: pd.DataFrame, bs_start: int | None, ftx_end: int
     return MetricEntry(value=round(median_angle, 1), unit="deg", primary=True)
 
 
-def _compute_knee_flex_right(df: pd.DataFrame, bs_start: int | None, ftx_end: int | None) -> MetricEntry:
+def _compute_knee_flex_right(df: pd.DataFrame | None, bs_start: int | None, ftx_end: int | None) -> MetricEntry:
     """Metric 12: Knee flex right — angle at right knee during swing."""
     if not bs_start or not ftx_end:
         return MetricEntry(value=None, unit="deg", primary=True, null_reason="Swing bounds missing")
+
+    if df is None:
+        return MetricEntry(value=None, unit="deg", primary=True, null_reason="Keypoint data missing")
 
     # Use median angle during swing for stability
     swing_df = get_frame_subset(df, bs_start, ftx_end)
@@ -647,32 +677,17 @@ def compute_all_metrics(session: SessionJSON, parquet_path: Path) -> dict[str, M
     impact = session.impact_frame_index
     ftx_end = session.follow_through_end_frame_index
 
-    # Compute remaining metrics
-    # Note: Some functions (like hip_sway) can check their own conditions (e.g., missing address_range)
-    # even if df is None, so we call them all
+    # Compute remaining metrics (call functions to get specific error reasons)
     metrics["hip_sway"] = _compute_hip_sway(df, address_range, scale)
-    metrics["head_sway"] = _compute_head_sway(df, address_range, scale) if df is not None else MetricEntry(value=None, unit="inches", primary=True, null_reason="Keypoint data missing")
-
-    if df is not None:
-        metrics["hip_turn"] = _compute_hip_turn(df, address_range, impact)
-        metrics["shoulder_turn"] = _compute_shoulder_turn(df, address_range, impact)
-        metrics["x_factor"] = _compute_x_factor(df, bs_start, impact)
-        metrics["spine_deviation_max"] = _compute_spine_deviation_max(df, address_range, bs_start, impact)
-        metrics["side_bend"] = _compute_side_bend(df, bs_start, impact)
-        metrics["hips_open"] = _compute_hips_open(df, impact)
-        metrics["wrist_lag"] = _compute_wrist_lag(df, impact)
-        metrics["knee_flex_left"] = _compute_knee_flex_left(df, bs_start, ftx_end)
-        metrics["knee_flex_right"] = _compute_knee_flex_right(df, bs_start, ftx_end)
-    else:
-        # No parquet data available
-        for key in [
-            "x_factor", "spine_deviation_max", "hip_turn", "shoulder_turn",
-            "side_bend", "hips_open", "wrist_lag", "knee_flex_left", "knee_flex_right"
-        ]:
-            metrics[key] = MetricEntry(
-                value=None, unit="deg" if key != "hip_sway" and key != "head_sway" else "inches",
-                primary=key != "wrist_lag",
-                null_reason="Keypoint data missing"
-            )
+    metrics["head_sway"] = _compute_head_sway(df, address_range, scale)
+    metrics["hip_turn"] = _compute_hip_turn(df, address_range, impact)
+    metrics["shoulder_turn"] = _compute_shoulder_turn(df, address_range, impact)
+    metrics["x_factor"] = _compute_x_factor(df, bs_start, impact)
+    metrics["spine_deviation_max"] = _compute_spine_deviation_max(df, address_range, bs_start, impact)
+    metrics["side_bend"] = _compute_side_bend(df, bs_start, impact)
+    metrics["hips_open"] = _compute_hips_open(df, impact)
+    metrics["wrist_lag"] = _compute_wrist_lag(df, impact)
+    metrics["knee_flex_left"] = _compute_knee_flex_left(df, bs_start, ftx_end)
+    metrics["knee_flex_right"] = _compute_knee_flex_right(df, bs_start, ftx_end)
 
     return metrics

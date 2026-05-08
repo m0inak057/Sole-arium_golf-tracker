@@ -404,40 +404,86 @@ class TestFullScoringPipeline:
 
     def test_band_classification(self):
         """Test band classification boundaries."""
-        session = SessionJSON(gender="male")
-        
         # Create scenarios for different overall scores
         test_cases = [
-            (100.0, "Proficient"),   # Perfect
-            (85.0, "Proficient"),    # Just above 80
-            (80.0, "Developing"),    # At boundary
-            (65.0, "Developing"),    # Middle
-            (50.0, "Beginner"),      # At boundary
-            (25.0, "Beginner"),      # Low
-            (0.0, "Beginner"),       # Zero
+            (100.0, "Proficient"),   # Perfect (all green: score=1.0)
+            (85.0, "Proficient"),    # Just above 80 (mix of green+amber: avg=0.85)
+            (80.0, "Developing"),    # At boundary (mix of green+amber: avg=0.80)
+            (65.0, "Developing"),    # Middle (mostly amber: avg=0.65)
+            (50.0, "Beginner"),      # At boundary (all amber: score=0.5)
+            (25.0, "Beginner"),      # Low (mostly red: avg=0.25)
+            (0.0, "Beginner"),       # Zero (all red: score=0.0)
         ]
-        
+
         for overall_score, expected_band in test_cases:
-            # Create metrics to achieve the desired overall score
-            num_metrics = 10
-            score_per_metric = overall_score / 100.0  # Convert percentage to per-metric score
-            
+            # Create fresh session for each test case
+            session = SessionJSON(gender="male")
+
+            # Convert percentage to per-metric score (0.0-1.0)
+            score_per_metric = overall_score / 100.0
+
+            # Create metrics with real names
+            # Green thresholds at [40.0, 60.0], amber at [30.0, 70.0], red edges at 30/70
             session.metrics = {
-                f"metric_{i}": MetricEntry(value=1.0 if score_per_metric >= 1.0 else (10.0 if score_per_metric >= 0.5 else 20.0))
-                for i in range(num_metrics)
+                "tempo_ratio": MetricEntry(value=50.0),      # Always in middle
+                "x_factor": MetricEntry(value=50.0),
+                "spine_deviation_max": MetricEntry(value=50.0),
+                "hip_sway": MetricEntry(value=50.0),
+                "head_sway": MetricEntry(value=50.0),
+                "hip_turn": MetricEntry(value=50.0),
+                "shoulder_turn": MetricEntry(value=50.0),
+                "side_bend": MetricEntry(value=50.0),
+                "hips_open": MetricEntry(value=50.0),
+                "wrist_lag": MetricEntry(value=50.0),
+                "knee_flex_left": MetricEntry(value=50.0),
+                "knee_flex_right": MetricEntry(value=50.0),
+                "stance_width": MetricEntry(value=1.0),      # Ratio metric with value 1.0
             }
-            
-            session.active_thresholds = {
-                f"metric_{i}": ThresholdRange(
-                    green=[0.0, 1.0],
-                    amber=[5.0, 15.0],
-                    red_above=15.0
-                )
-                for i in range(num_metrics)
-            }
-            
+
+            # Thresholds: green=[40, 60] gives green (1.0), amber=[30, 70] gives amber (0.5)
+            # Adjust number of green/amber metrics to achieve desired overall_score
+            # For overall_score = X%, need: (num_green * 1.0 + num_amber * 0.5) / 13 = X/100
+            num_metrics = 13
+            target_sum = score_per_metric * num_metrics
+
+            # Calculate num_green and num_amber needed
+            if score_per_metric >= 1.0:
+                num_green = num_metrics
+                num_amber = 0
+            elif score_per_metric >= 0.5:
+                num_green = int(2 * target_sum - num_metrics)
+                num_amber = num_metrics - num_green
+            else:
+                num_green = 0
+                num_amber = int(2 * target_sum)
+
+            # Create thresholds where first N metrics are green and rest are red
+            session.active_thresholds = {}
+            metric_names = [
+                "tempo_ratio", "x_factor", "spine_deviation_max", "hip_sway", "head_sway",
+                "hip_turn", "shoulder_turn", "side_bend", "hips_open", "wrist_lag",
+                "knee_flex_left", "knee_flex_right", "stance_width"
+            ]
+
+            for i, name in enumerate(metric_names):
+                if i < num_green:
+                    # Green: metric value 50.0 will be in [40, 60]
+                    session.active_thresholds[name] = ThresholdRange(green=[40.0, 60.0])
+                elif i < num_green + num_amber:
+                    # Amber: metric value 50.0 will be in amber range but not green
+                    # Green=[60, 80], Amber=[40, 90] → 50.0 scores amber
+                    session.active_thresholds[name] = ThresholdRange(
+                        green=[60.0, 80.0], amber=[40.0, 90.0]
+                    )
+                else:
+                    # Red: metric value 50.0 will not match green/amber
+                    # Green=[60, 80], Red above/below → 50.0 scores red
+                    session.active_thresholds[name] = ThresholdRange(
+                        green=[60.0, 80.0], red_below=60.0
+                    )
+
             scores = score_metrics(session)
-            
+
             # Check band (within tolerance due to rounding)
             if expected_band == "Proficient":
                 assert scores.band_overall == "Proficient"

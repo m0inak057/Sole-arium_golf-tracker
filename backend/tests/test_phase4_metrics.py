@@ -233,7 +233,7 @@ class TestAll13Metrics:
 
     def test_metric_1_tempo_ratio_missing_bounds(self) -> None:
         """Test tempo ratio with missing swing bounds."""
-        session = SessionJSON(session_id="test")
+        session = SessionJSON(session_id="test", gender="male")
         metric = _compute_tempo_ratio(session)
         assert metric.value is None
         assert metric.null_reason == "Swing bounds missing"
@@ -349,9 +349,17 @@ class TestEdgeCases:
         """Test compute_all_metrics with missing parquet file."""
         metrics = compute_all_metrics(session_base, Path("/nonexistent/path.parquet"))
         assert metrics is not None
-        # All metrics should have null_reason
-        for metric in metrics.values():
-            assert metric.value is None or metric.null_reason == "Keypoint data missing"
+        # Metrics that depend on parquet should be null
+        # Metrics that don't (tempo_ratio, stance_width) can still have values
+        parquet_dependent = {
+            "x_factor", "spine_deviation_max", "hip_sway", "head_sway",
+            "hip_turn", "shoulder_turn", "side_bend", "hips_open",
+            "wrist_lag", "knee_flex_left", "knee_flex_right"
+        }
+        for name, metric in metrics.items():
+            if name in parquet_dependent:
+                assert metric.value is None, f"{name} should be null when parquet is missing"
+                assert metric.null_reason == "Keypoint data missing", f"{name} should have 'Keypoint data missing' error"
 
     def test_invalid_parquet_format(self, session_base: SessionJSON) -> None:
         """Test compute_all_metrics with corrupted parquet file."""
@@ -359,14 +367,20 @@ class TestEdgeCases:
             # Write invalid content
             f.write(b"invalid parquet content")
             temp_path = Path(f.name)
-        
+
         try:
             metrics = compute_all_metrics(session_base, temp_path)
             assert metrics is not None
-            # All metrics should have null_reason
-            for metric in metrics.values():
-                if metric.value is None:
-                    assert "error" in metric.null_reason.lower() or metric.null_reason == "Keypoint data read error"
+            # Metrics that depend on parquet should be null with error
+            parquet_dependent = {
+                "x_factor", "spine_deviation_max", "hip_sway", "head_sway",
+                "hip_turn", "shoulder_turn", "side_bend", "hips_open",
+                "wrist_lag", "knee_flex_left", "knee_flex_right"
+            }
+            for name, metric in metrics.items():
+                if name in parquet_dependent:
+                    assert metric.value is None, f"{name} should be null when parquet is invalid"
+                    assert metric.null_reason == "Keypoint data missing", f"{name} should report missing keypoint data"
         finally:
             temp_path.unlink()
 
@@ -379,6 +393,7 @@ class TestEdgeCases:
         # Metrics should handle gracefully (either null or use available data)
         session = SessionJSON(
             session_id="test",
+            gender="male",
             address_frame_range=[0, 8],
             backswing_start_frame_index=10,
             impact_frame_index=50,
