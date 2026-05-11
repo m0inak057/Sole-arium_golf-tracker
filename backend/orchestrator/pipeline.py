@@ -544,7 +544,7 @@ async def _phase7_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
     # Create enhanced slowmo configuration
     config = SlowmoConfig(
         duplication_factor=4,  # 0.25× speed (4× frame duplication)
-        enable_90fps=True,  # Enable 90fps output support
+        enable_90fps=False,  # Disable 90fps to preserve slowmo effect (4x frame duplication with input FPS)
         quality_preset="high",  # High quality for better results
         enable_interpolation=False,  # Can be enabled for even smoother motion
     )
@@ -734,11 +734,25 @@ async def _phase8_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
 
         logger.info(f"Phase 8 checking for slowmo videos: face_on={face_on_slowmo.exists()}, dtl={dtl_slowmo.exists()}")
 
+        # Log detailed file information
+        if face_on_slowmo.exists():
+            face_on_size = face_on_slowmo.stat().st_size
+            logger.info(f"  Face-on slowmo found: {face_on_slowmo} ({face_on_size / 1_000_000:.1f}MB)")
+        else:
+            logger.error(f"  Face-on slowmo NOT found at: {face_on_slowmo}")
+
+        if dtl_slowmo.exists():
+            dtl_size = dtl_slowmo.stat().st_size
+            logger.info(f"  Down-the-line slowmo found: {dtl_slowmo} ({dtl_size / 1_000_000:.1f}MB)")
+        else:
+            logger.error(f"  Down-the-line slowmo NOT found at: {dtl_slowmo}")
+
         if not face_on_slowmo.exists() or not dtl_slowmo.exists():
             logger.error(f"Phase 8 FAILED: missing slowmo videos from Phase 7")
             logger.error(f"  Expected: {face_on_slowmo}")
             logger.error(f"  Expected: {dtl_slowmo}")
             logger.error(f"Phase 7 may have failed. Cannot proceed with Phase 8.")
+            logger.error(f"Files in session dir: {list(session_dir.glob('*.mp4'))}")
             session.overlay_rendering_failed = True
             return session
         

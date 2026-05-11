@@ -157,13 +157,23 @@ def render_overlay(
         end_frame: End frame index.
         camera_angle: Camera angle ("face_on" or "down_the_line").
         config: Overlay configuration (uses defaults if None).
-        
+
     Returns:
         True if successfully rendered and output file exists.
     """
     if config is None:
         config = OverlayConfig()
-    
+
+    # Log the input video being processed to verify it's the slowmo video
+    logger.info(f"[render_overlay] Processing {camera_angle} overlay")
+    logger.info(f"  Input video: {input_video}")
+    logger.info(f"  Input exists: {input_video.exists()}")
+    logger.info(f"  Input is slowmo: {'slowmo' in str(input_video)}")
+    if input_video.exists():
+        input_size = input_video.stat().st_size
+        logger.info(f"  Input size: {input_size / 1_000_000:.1f}MB")
+    logger.info(f"  Output path: {output_video}")
+
     if not input_video.exists() or not keypoints_parquet.exists():
         logger.error(f"Input files missing: video={input_video.exists()}, parquet={keypoints_parquet.exists()}")
         return False

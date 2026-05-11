@@ -9,15 +9,12 @@ import { useEffect, useState } from "react";
 import { getFullSession, getVideoDownloadUrl, ApiError } from "@/lib/api";
 import type { SessionJSON } from "@/lib/types";
 import AnnotatedVideo from "./AnnotatedVideo";
-import SlowMoTab from "./SlowMoTab";
 import MetricsPanel from "./MetricsPanel";
 import CoachingOutput from "./CoachingOutput";
 import ScoreCard from "./ScoreCard";
 import { motion } from "framer-motion";
 import { Download, ChevronLeft, Video, AlertCircle, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-type VideoTab = "annotated" | "slowmo";
 
 export default function ResultsPage() {
   const params = useParams();
@@ -26,7 +23,6 @@ export default function ResultsPage() {
 
   const [session, setSession] = useState<SessionJSON | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<VideoTab>("annotated");
   const [activeAngle, setActiveAngle] = useState<"face_on" | "down_the_line">("face_on");
 
   useEffect(() => {
@@ -133,33 +129,15 @@ export default function ResultsPage() {
           transition={{ delay: 0.1 }}
           className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-8"
         >
-          {/* Main Visualizer (Videos) */}
+          {/* Main Visualizer (Final Combined Video) */}
           <div className="flex flex-col bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl">
-            {/* Tabs */}
-            <div className="flex flex-col sm:flex-row p-2 bg-slate-950 border-b border-slate-800 gap-2">
-              <div className="flex p-1 bg-slate-900 rounded-xl flex-1">
-                <button
-                  onClick={() => setActiveTab("annotated")}
-                  className={cn(
-                    "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 text-xs font-bold uppercase tracking-wider rounded-lg transition-all",
-                    activeTab === "annotated" 
-                      ? "bg-slate-800 text-emerald-400 shadow-sm" 
-                      : "text-slate-500 hover:text-slate-300"
-                  )}
-                >
-                  <Video className="w-4 h-4" /> Annotated
-                </button>
-                <button
-                  onClick={() => setActiveTab("slowmo")}
-                  className={cn(
-                    "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 text-xs font-bold uppercase tracking-wider rounded-lg transition-all",
-                    activeTab === "slowmo" 
-                      ? "bg-slate-800 text-cyan-400 shadow-sm" 
-                      : "text-slate-500 hover:text-slate-300"
-                  )}
-                >
-                  <Video className="w-4 h-4" /> Slow-Mo
-                </button>
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row p-4 bg-slate-950 border-b border-slate-800 gap-2 items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Video className="w-5 h-5 text-emerald-400" />
+                <span className="text-sm font-bold uppercase tracking-wider text-emerald-400">
+                  Final Analysis Video
+                </span>
               </div>
 
               {isDual && (
@@ -167,10 +145,10 @@ export default function ResultsPage() {
                   <button
                     onClick={() => setActiveAngle("face_on")}
                     className={cn(
-                      "px-4 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all",
-                      activeAngle === "face_on" 
-                        ? "bg-emerald-500 text-slate-950 shadow-lg" 
-                        : "text-slate-500 hover:text-slate-300"
+                      "px-4 py-2 text-xs font-bold uppercase tracking-widest rounded-lg transition-all",
+                      activeAngle === "face_on"
+                        ? "bg-emerald-500 text-slate-950 shadow-lg"
+                        : "text-slate-400 hover:text-slate-300"
                     )}
                   >
                     Face-On
@@ -178,24 +156,20 @@ export default function ResultsPage() {
                   <button
                     onClick={() => setActiveAngle("down_the_line")}
                     className={cn(
-                      "px-4 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all",
-                      activeAngle === "down_the_line" 
-                        ? "bg-emerald-500 text-slate-950 shadow-lg" 
-                        : "text-slate-500 hover:text-slate-300"
+                      "px-4 py-2 text-xs font-bold uppercase tracking-widest rounded-lg transition-all",
+                      activeAngle === "down_the_line"
+                        ? "bg-emerald-500 text-slate-950 shadow-lg"
+                        : "text-slate-400 hover:text-slate-300"
                     )}
                   >
-                    DTL
+                    Down-The-Line
                   </button>
                 </div>
               )}
             </div>
 
             <div className="flex-1 bg-slate-950/50 p-6 flex flex-col items-center justify-center min-h-[500px]">
-              {activeTab === "annotated" ? (
-                <AnnotatedVideo sessionId={sessionId} angle={isDual ? activeAngle : undefined} />
-              ) : (
-                <SlowMoTab sessionId={sessionId} angle={isDual ? activeAngle : undefined} />
-              )}
+              <AnnotatedVideo sessionId={sessionId} angle={isDual ? activeAngle : undefined} />
             </div>
 
             {/* DL Actions */}
