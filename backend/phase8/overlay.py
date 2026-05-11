@@ -198,14 +198,22 @@ def render_overlay(
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total_frames = end_frame - start_frame + 1
+
+    # Get total frame count from the input video (entire video, not just critical window)
+    actual_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # The start_frame and end_frame are for the critical window (where overlays should be applied)
+    # But we need to render the ENTIRE video
+    critical_window_frames = end_frame - start_frame + 1
 
     logger.info(
-        f"Rendering {camera_angle} overlay: {total_frames} frames, {width}x{height}, {fps}fps",
+        f"Rendering {camera_angle} overlay: {actual_total_frames} total frames, critical window {start_frame}-{end_frame} ({critical_window_frames} frames), {width}x{height}, {fps}fps",
         extra={
             "phase": "phase8",
             "event": "overlay_start",
             "camera_angle": camera_angle,
+            "critical_window_frames": critical_window_frames,
+            "total_frames": actual_total_frames,
             "config": {
                 "skeleton": config.show_skeleton,
                 "overlays": config.show_angle_overlays,
@@ -241,73 +249,75 @@ def render_overlay(
     # Get angle-specific overlays
     angle_overlays = get_angle_specific_overlays(camera_angle, metrics, thresholds)
 
-    # Seek to start frame
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-    current_frame = start_frame
+    # Seek to first frame (start of entire video, not critical window)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    current_frame = 0
     frame_count = 0
 
-    # Main rendering loop
-    while current_frame <= end_frame:
+    # Main rendering loop - process ENTIRE video
+    while current_frame < actual_total_frames:
         ret, frame = cap.read()
         if not ret or frame is None:
             logger.warning(f"Failed to read frame {current_frame} for {camera_angle}")
             break
 
-        # Get keypoints for this frame from parquet
-        frame_kpts = df[df["frame_index"] == current_frame]
+        # Only apply overlays if we're in the critical window
+        if start_frame <= current_frame <= end_frame:
+            # Get keypoints for this frame from parquet
+            frame_kpts = df[df["frame_index"] == current_frame]
 
-        if not frame_kpts.empty:
-            # Build keypoint dict: {landmark_id: (x_px, y_px, visibility)}
-            keypoints_dict: dict[int, tuple[float, float, float]] = {}
+            if not frame_kpts.empty:
+                # Build keypoint dict: {landmark_id: (x_px, y_px, visibility)}
+                keypoints_dict: dict[int, tuple[float, float, float]] = {}
 
-            for _, row in frame_kpts.iterrows():
-                landmark_id = int(row["landmark_id"])
-                # Convert normalized coords to pixels
-                x_px = float(row["x"]) * width
-                y_px = float(row["y"]) * height
-                visibility = float(row["visibility"])
+                for _, row in frame_kpts.iterrows():
+                    landmark_id = int(row["landmark_id"])
+                    # Convert normalized coords to pixels
+                    x_px = float(row["x"]) * width
+                    y_px = float(row["y"]) * height
+                    visibility = float(row["visibility"])
 
-                keypoints_dict[landmark_id] = (x_px, y_px, visibility)
+                    keypoints_dict[landmark_id] = (x_px, y_px, visibility)
 
-            # ─── ENHANCED RENDERING ORDER (back to front) ────────────────────
-            
-            # 1. Skeleton limb lines (if enabled)
-            if config.show_skeleton:
-                frame = draw_skeleton(frame, keypoints_dict)
+                # ─── ENHANCED RENDERING ORDER (back to front) ────────────────────
 
-            # 2. Joint dots (if enabled)
-            if config.show_joint_dots:
-                frame = draw_joint_dots(frame, keypoints_dict)
+                # 1. Skeleton limb lines (if enabled)
+                if config.show_skeleton:
+                    frame = draw_skeleton(frame, keypoints_dict)
 
-            # 3. Angle-specific overlays (if enabled)
-            if config.show_angle_overlays:
-                # Draw overlays based on camera angle optimization
-                if camera_angle == "face_on":
-                    # Face-on specific overlays
-                    frame = draw_angle_overlay_xfactor(frame, keypoints_dict, angle_overlays.get("x_factor"), thresholds)
-                    frame = draw_angle_overlay_spine(frame, keypoints_dict, angle_overlays.get("spine_deviation"), thresholds)
-                    frame = draw_angle_overlay_stance(frame, keypoints_dict, angle_overlays.get("stance_width"), thresholds)
-                    frame = draw_angle_overlay_knee(frame, keypoints_dict, angle_overlays.get("knee_flex"), thresholds)
-                elif camera_angle == "down_the_line":
-                    # Down-the-line specific overlays
-                    frame = draw_angle_overlay_wrist_lag(frame, keypoints_dict, angle_overlays.get("wrist_lag"), thresholds)
-                    # Additional DTL-specific overlays can be added here
-                else:
-                    # Default: show all overlays
-                    frame = draw_angle_overlay_xfactor(frame, keypoints_dict, angle_overlays.get("x_factor"), thresholds)
-                    frame = draw_angle_overlay_spine(frame, keypoints_dict, angle_overlays.get("spine_deviation"), thresholds)
-                    frame = draw_angle_overlay_wrist_lag(frame, keypoints_dict, angle_overlays.get("wrist_lag"), thresholds)
-                    frame = draw_angle_overlay_knee(frame, keypoints_dict, angle_overlays.get("knee_flex"), thresholds)
-                    frame = draw_angle_overlay_stance(frame, keypoints_dict, angle_overlays.get("stance_width"), thresholds)
+                # 2. Joint dots (if enabled)
+                if config.show_joint_dots:
+                    frame = draw_joint_dots(frame, keypoints_dict)
 
-        # 4. HUD panel (if enabled)
-        if config.show_hud:
-            frame = draw_bottom_hud(frame, session_json, current_frame, end_frame)
+                # 3. Angle-specific overlays (if enabled)
+                if config.show_angle_overlays:
+                    # Draw overlays based on camera angle optimization
+                    if camera_angle == "face_on":
+                        # Face-on specific overlays
+                        frame = draw_angle_overlay_xfactor(frame, keypoints_dict, angle_overlays.get("x_factor"), thresholds)
+                        frame = draw_angle_overlay_spine(frame, keypoints_dict, angle_overlays.get("spine_deviation"), thresholds)
+                        frame = draw_angle_overlay_stance(frame, keypoints_dict, angle_overlays.get("stance_width"), thresholds)
+                        frame = draw_angle_overlay_knee(frame, keypoints_dict, angle_overlays.get("knee_flex"), thresholds)
+                    elif camera_angle == "down_the_line":
+                        # Down-the-line specific overlays
+                        frame = draw_angle_overlay_wrist_lag(frame, keypoints_dict, angle_overlays.get("wrist_lag"), thresholds)
+                        # Additional DTL-specific overlays can be added here
+                    else:
+                        # Default: show all overlays
+                        frame = draw_angle_overlay_xfactor(frame, keypoints_dict, angle_overlays.get("x_factor"), thresholds)
+                        frame = draw_angle_overlay_spine(frame, keypoints_dict, angle_overlays.get("spine_deviation"), thresholds)
+                        frame = draw_angle_overlay_wrist_lag(frame, keypoints_dict, angle_overlays.get("wrist_lag"), thresholds)
+                        frame = draw_angle_overlay_knee(frame, keypoints_dict, angle_overlays.get("knee_flex"), thresholds)
+                        frame = draw_angle_overlay_stance(frame, keypoints_dict, angle_overlays.get("stance_width"), thresholds)
 
-        # 5. Phase label with camera angle (if enabled)
-        if config.show_phase_label:
-            label_text = f"Phase 8: {camera_angle.replace('_', '-').title()} Overlay"
-            frame = draw_phase_label(frame, label_text, camera_angle)
+            # 4. HUD panel (if enabled, only in critical window)
+            if config.show_hud:
+                frame = draw_bottom_hud(frame, session_json, current_frame, end_frame)
+
+            # 5. Phase label with camera angle (if enabled, only in critical window)
+            if config.show_phase_label:
+                label_text = f"Phase 8: {camera_angle.replace('_', '-').title()} Overlay"
+                frame = draw_phase_label(frame, label_text, camera_angle)
 
         # Write frame to output
         out.write(frame)

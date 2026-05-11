@@ -349,10 +349,11 @@ class TestRenderOverlay:
         
         assert success
         assert output_path.exists()
-        
+
         cap = cv2.VideoCapture(str(output_path))
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        assert frame_count == 3  # 1-3 inclusive
+        # Now renders entire video (0-4) instead of just critical window (1-3)
+        assert frame_count == 5  # full video, with overlays applied to frames 1-3
         cap.release()
     
     def test_render_overlay_different_camera_angles(self, tmp_path, synthetic_video, keypoints_parquet, sample_session):
