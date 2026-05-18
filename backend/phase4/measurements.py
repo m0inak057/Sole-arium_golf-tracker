@@ -232,18 +232,21 @@ def _compute_hip_sway(df: pd.DataFrame | None, address_frame_range: list[int] | 
 
     addr_hip_x = (float(left_hip_addr["x"]) + float(right_hip_addr["x"])) / 2.0
 
-    # Get max horizontal deviation during swing
+    # Get max horizontal deviation during swing — use groupby for efficiency
     swing_df = df[df["visibility"] >= 0.5]
-    left_hip_swing = swing_df[swing_df["landmark_name"] == "left_hip"][["frame_index", "x", "y", "z", "visibility"]]
-    right_hip_swing = swing_df[swing_df["landmark_name"] == "right_hip"][["frame_index", "x", "y", "z", "visibility"]]
 
     max_sway_px = 0.0
-    for _, lh in left_hip_swing.iterrows():
-        for _, rh in right_hip_swing.iterrows():
-            if lh["frame_index"] == rh["frame_index"]:  # Same frame
-                hip_x = (float(lh["x"]) + float(rh["x"])) / 2.0
-                delta_px = abs(hip_x - addr_hip_x) * 1920  # Assume 1920 width
-                max_sway_px = max(max_sway_px, delta_px)
+    for frame_idx in swing_df["frame_index"].unique():
+        frame_data = swing_df[swing_df["frame_index"] == frame_idx]
+        left_hip_frame = frame_data[frame_data["landmark_name"] == "left_hip"]
+        right_hip_frame = frame_data[frame_data["landmark_name"] == "right_hip"]
+
+        if not left_hip_frame.empty and not right_hip_frame.empty:
+            lh_x = float(left_hip_frame.iloc[0]["x"])
+            rh_x = float(right_hip_frame.iloc[0]["x"])
+            hip_x = (lh_x + rh_x) / 2.0
+            delta_px = abs(hip_x - addr_hip_x) * 1920
+            max_sway_px = max(max_sway_px, delta_px)
 
     if max_sway_px < 0.1:
         return MetricEntry(value=0.0, unit="inches", primary=True)
