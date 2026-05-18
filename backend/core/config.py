@@ -21,9 +21,7 @@ class Settings(BaseSettings):
     )
 
     # ── LLM config ───────────────────────────────────────────────────
-    llm_provider: str = "gemini"  # "gemini" | "anthropic"
-    gemini_api_key: str = ""
-    gemini_model: str = "gemini-1.5-flash"
+    llm_provider: str = "anthropic"  # Using Claude (Anthropic)
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-4-7"
 

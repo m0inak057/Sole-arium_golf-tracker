@@ -13,7 +13,7 @@ Golf Trainer 2 is an advanced AI system that analyzes golf swing videos using co
 ### Backend
 - **Framework**: FastAPI (Python 3.12)
 - **Video Processing**: OpenCV, FFmpeg
-- **AI/ML**: Google Gemini AI, MediaPipe
+- **AI/ML**: Claude (Anthropic), MediaPipe
 - **Database/Storage**: Local filesystem with JSON sessions
 - **Code Quality**: Type hints throughout, comprehensive logging
 
@@ -334,8 +334,9 @@ python -m pytest -v
 
 ```bash
 # AI/ML
-GEMINI_API_KEY=<your-key>           # Google Gemini API key
-GEMINI_MODEL=gemini-2.5-flash       # Model version
+LLM_PROVIDER=anthropic              # Using Claude (Anthropic)
+ANTHROPIC_API_KEY=<your-key>        # Claude API key from api.anthropic.com
+ANTHROPIC_MODEL=claude-opus-4-7     # Claude model version
 
 # Storage
 STORAGE_BACKEND=local               # local or cloud provider

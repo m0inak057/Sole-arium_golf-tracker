@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 # Set env vars BEFORE any backend imports so backend.main.py -> get_settings() succeeds
-os.environ["GEMINI_API_KEY"] = "test-key-not-real"
+os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test-key-not-real-for-testing"
 os.environ["STORAGE_BACKEND"] = "local"
 os.environ["STORAGE_LOCAL_PATH"] = "./storage"
 
@@ -33,8 +33,8 @@ def test_settings(tmp_path: Path) -> Settings:
         Test ``Settings`` instance.
     """
     return Settings(
-        gemini_api_key="test-key-not-real",
-        gemini_model="gemini-2.5-flash",
+        anthropic_api_key="sk-ant-test-key-not-real-for-testing",
+        anthropic_model="claude-opus-4-7",
         storage_backend="local",
         storage_local_path=str(tmp_path / "storage"),
         max_upload_mb=10,

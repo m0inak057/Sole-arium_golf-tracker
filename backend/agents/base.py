@@ -1,7 +1,7 @@
-"""Shared Gemini client and JSON-only contract for all agents.
+"""Shared Claude (Anthropic) client and JSON-only contract for all agents.
 
 Common infrastructure:
-- Builds the Gemini client from ``GEMINI_API_KEY``.
+- Builds the Claude client from ``ANTHROPIC_API_KEY``.
 - Enforces JSON-only output via strict system prompts.
 - Parses the response; on parse failure retries once with a
   stricter prompt; on second failure marks the session ``failed``
@@ -77,34 +77,21 @@ class BaseAgent(ABC):
         return 4096 if self.agent_number == 5 else 2048
 
     def _get_client(self) -> Any:
-        """Lazily initialise the LLM client.
+        """Lazily initialise the Claude (Anthropic) API client.
 
         Returns:
-            A ``google.genai.Client`` or ``anthropic.Anthropic`` instance.
+            An ``anthropic.Anthropic`` instance.
         """
         if self._client is None:
-            provider = self._settings.llm_provider.lower()
-            if provider == "anthropic":
-                try:
-                    import anthropic
-                    if not self._settings.anthropic_api_key:
-                        raise RuntimeError("ANTHROPIC_API_KEY is missing or empty.")
-                    self._client = anthropic.Anthropic(api_key=self._settings.anthropic_api_key)
-                except ImportError as exc:
-                    raise RuntimeError(
-                        "anthropic package is required. Install with: pip install anthropic"
-                    ) from exc
-            else:
-                # Default to Gemini
-                try:
-                    from google import genai
-                    if not self._settings.gemini_api_key:
-                        raise RuntimeError("GEMINI_API_KEY is missing or empty.")
-                    self._client = genai.Client(api_key=self._settings.gemini_api_key)
-                except ImportError as exc:
-                    raise RuntimeError(
-                        "google-genai package is required. Install with: pip install google-genai"
-                    ) from exc
+            try:
+                import anthropic
+                if not self._settings.anthropic_api_key:
+                    raise RuntimeError("ANTHROPIC_API_KEY is missing or empty.")
+                self._client = anthropic.Anthropic(api_key=self._settings.anthropic_api_key)
+            except ImportError as exc:
+                raise RuntimeError(
+                    "anthropic package is required. Install with: pip install anthropic"
+                ) from exc
         return self._client
 
     @abstractmethod
@@ -150,7 +137,7 @@ class BaseAgent(ABC):
 
         log_event(
             logger,
-            f"Agent {self.agent_number} calling {self._settings.llm_provider}",
+            f"Agent {self.agent_number} calling Claude (Anthropic)",
             session_id=session_id,
             agent=f"agent{self.agent_number}",
             event="agent_call_started",
@@ -189,66 +176,48 @@ class BaseAgent(ABC):
         raise AgentMalformedOutputError(self.agent_number)
 
     def _call_api(self, client: Any, user_prompt: str) -> str:
-        """Make a synchronous API call with retry logic for network errors.
+        """Make a synchronous API call to Claude with retry logic for network errors.
 
         Args:
-            client: LLM client instance (Gemini or Anthropic).
+            client: Claude (Anthropic) API client instance.
             user_prompt: The assembled user prompt.
 
         Returns:
             Raw response text.
-        
+
         Raises:
             Exception: If all retries fail.
         """
-        provider = self._settings.llm_provider.lower()
         max_retries = 3
         retry_delay = 2
 
         for attempt in range(max_retries):
             try:
-                if provider == "anthropic":
-                    response = client.messages.create(
-                        model=self._settings.anthropic_model,
-                        max_tokens=self.max_tokens,
-                        system=self.system_prompt,
-                        messages=[{"role": "user", "content": user_prompt}],
-                    )
-                    # Anthropic response content is a list of blocks
-                    text = ""
-                    for block in response.content:
-                        if hasattr(block, "text"):
-                            text += block.text
-                    return text
-                else:
-                    # Gemini
-                    from google.genai import types
-                    config = types.GenerateContentConfig(
-                        system_instruction=self.system_prompt,
-                        temperature=self.temperature,
-                    )
-                    response = client.models.generate_content(
-                        model=self._settings.gemini_model,
-                        contents=user_prompt,
-                        config=config,
-                    )
-                    if response.candidates:
-                        finish_reason = getattr(response.candidates[0], "finish_reason", "UNKNOWN")
-                        log_event(logger, f"Gemini finish_reason: {finish_reason}")
-                    return response.text or ""
+                response = client.messages.create(
+                    model=self._settings.anthropic_model,
+                    max_tokens=self.max_tokens,
+                    system=self.system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}],
+                )
+                # Claude response content is a list of content blocks
+                text = ""
+                for block in response.content:
+                    if hasattr(block, "text"):
+                        text += block.text
+                return text
 
             except Exception as e:
                 error_name = type(e).__name__
                 # Retryable errors
                 retryable = any(x in error_name for x in [
-                    "RemoteProtocolError", "TransportError", "ConnectionError", "Timeout", 
+                    "RemoteProtocolError", "TransportError", "ConnectionError", "Timeout",
                     "APIStatusError", "RateLimitError", "InternalServerError"
                 ])
-                
+
                 if retryable and attempt < max_retries - 1:
                     log_event(
                         logger,
-                        f"{provider.capitalize()} network error (attempt {attempt + 1}/{max_retries}) — retrying in {retry_delay}s",
+                        f"Claude network error (attempt {attempt + 1}/{max_retries}) — retrying in {retry_delay}s",
                         session_id="",
                         agent=f"agent{self.agent_number}",
                         event="agent_network_retry",
@@ -257,10 +226,10 @@ class BaseAgent(ABC):
                     time.sleep(retry_delay)
                     retry_delay *= 2
                     continue
-                
+
                 log_event(
                     logger,
-                    f"{provider.capitalize()} error failed after {attempt + 1} attempts",
+                    f"Claude error failed after {attempt + 1} attempts",
                     session_id="",
                     agent=f"agent{self.agent_number}",
                     event="agent_network_failed",
