@@ -19,6 +19,7 @@ Integration points:
 from __future__ import annotations
 
 import asyncio
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,44 @@ from backend.orchestrator.overlay_renderer import (
 )
 
 logger = get_logger(__name__)
+
+
+def _slowmo_to_original_frame(
+    slowmo_idx: int,
+    start_frame: int,
+    end_frame: int,
+    duplication_factor: int,
+) -> int:
+    """Map a slowmo video frame index back to original video frame index.
+
+    Phase 7 duplicates frames in the critical window (start_frame to end_frame)
+    by duplication_factor times. This function reverses that mapping so Phase 8
+    can look up keypoints in the original frame's index space.
+
+    Args:
+        slowmo_idx: Frame index in the slowmo output video.
+        start_frame: Original video frame index where duplication begins.
+        end_frame: Original video frame index where duplication ends.
+        duplication_factor: Number of times critical frames were duplicated (e.g., 4).
+
+    Returns:
+        Corresponding frame index in the original video.
+    """
+    if slowmo_idx < start_frame:
+        # Before critical window: frames are 1:1
+        return slowmo_idx
+
+    critical_size = end_frame - start_frame + 1
+    slowmo_critical_end = start_frame + critical_size * duplication_factor - 1
+
+    if slowmo_idx <= slowmo_critical_end:
+        # Inside critical window: every duplication_factor slowmo frames map to 1 original
+        offset = slowmo_idx - start_frame
+        return start_frame + offset // duplication_factor
+    else:
+        # After critical window: subtract the extra frames added during duplication
+        extra = critical_size * (duplication_factor - 1)
+        return slowmo_idx - extra
 
 
 class OverlayConfig:
@@ -138,6 +177,7 @@ def render_overlay(
     end_frame: int,
     camera_angle: str = "face_on",
     config: OverlayConfig | None = None,
+    duplication_factor: int = 4,
 ) -> bool:
     """Render annotated overlay on video with skeleton, metrics, and HUD.
 
@@ -222,25 +262,58 @@ def render_overlay(
         }
     )
 
-    # Try codecs in fallback order with quality preference
-    codecs = ['H264', 'avc1', 'mp4v', 'X264', 'MJPG']
-    out = None
+    # Use FFmpeg for better compression (CRF-based H.264)
+    ffmpeg_process = None
+    use_ffmpeg = True
 
-    for codec in codecs:
-        try:
-            fourcc = cv2.VideoWriter_fourcc(*codec)  # type: ignore
-            out = cv2.VideoWriter(str(output_video), fourcc, fps, (width, height))
-            if out.isOpened():
-                logger.info(f"Opened VideoWriter with codec {codec} for {camera_angle}")
-                break
-        except Exception as e:
-            logger.warning(f"Codec {codec} failed for {camera_angle}: {e}")
-            continue
+    try:
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-y",  # Overwrite output
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-s", f"{width}x{height}",
+            "-pix_fmt", "bgr24",
+            "-r", str(fps),
+            "-i", "-",  # Read from stdin
+            "-c:v", "libx264",
+            "-preset", "medium",
+            "-crf", "23",  # Same quality as Phase 7 slowmo
+            "-movflags", "+faststart",
+            str(output_video),
+        ]
 
-    if out is None or not out.isOpened():
-        logger.error(f"Failed to open VideoWriter with any codec for {camera_angle}")
-        cap.release()
-        return False
+        ffmpeg_process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
+        )
+        logger.info(f"Using FFmpeg for {camera_angle} overlay encoding (CRF=23)")
+    except FileNotFoundError:
+        logger.warning("FFmpeg not found, falling back to cv2.VideoWriter")
+        use_ffmpeg = False
+
+        # Fallback: Try codecs in fallback order
+        codecs = ['H264', 'avc1', 'mp4v', 'X264', 'MJPG']
+        out = None
+
+        for codec in codecs:
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*codec)  # type: ignore
+                out = cv2.VideoWriter(str(output_video), fourcc, fps, (width, height))
+                if out.isOpened():
+                    logger.info(f"Opened VideoWriter with codec {codec} for {camera_angle}")
+                    break
+            except Exception as e:
+                logger.warning(f"Codec {codec} failed for {camera_angle}: {e}")
+                continue
+
+        if out is None or not out.isOpened():
+            logger.error(f"Failed to open VideoWriter with any codec for {camera_angle}")
+            cap.release()
+            return False
 
     # Extract metrics and thresholds
     metrics = getattr(session_json, "metrics", {})
@@ -261,10 +334,15 @@ def render_overlay(
             logger.warning(f"Failed to read frame {current_frame} for {camera_angle}")
             break
 
-        # Only apply overlays if we're in the critical window
-        if start_frame <= current_frame <= end_frame:
+        # Only apply overlays if we're in the critical window (in slowmo frame space)
+        slowmo_critical_end = start_frame + (end_frame - start_frame + 1) * duplication_factor - 1
+        if start_frame <= current_frame <= slowmo_critical_end:
+            # Map slowmo frame index back to original frame index for keypoint lookup
+            original_frame = _slowmo_to_original_frame(
+                current_frame, start_frame, end_frame, duplication_factor
+            )
             # Get keypoints for this frame from parquet
-            frame_kpts = df[df["frame_index"] == current_frame]
+            frame_kpts = df[df["frame_index"] == original_frame]
 
             if not frame_kpts.empty:
                 # Build keypoint dict: {landmark_id: (x_px, y_px, visibility)}
@@ -320,13 +398,38 @@ def render_overlay(
                 frame = draw_phase_label(frame, label_text, camera_angle)
 
         # Write frame to output
-        out.write(frame)
+        if use_ffmpeg:
+            try:
+                ffmpeg_process.stdin.write(frame.tobytes())
+            except BrokenPipeError:
+                logger.error(f"FFmpeg pipe closed unexpectedly at frame {current_frame}")
+                cap.release()
+                ffmpeg_process.terminate()
+                return False
+        else:
+            out.write(frame)
+
         current_frame += 1
         frame_count += 1
 
     # Cleanup
     cap.release()
-    out.release()
+
+    if use_ffmpeg:
+        try:
+            ffmpeg_process.stdin.close()
+            stdout, stderr = ffmpeg_process.communicate(timeout=300)
+            if ffmpeg_process.returncode != 0:
+                stderr_str = stderr.decode("utf-8", errors="ignore") if stderr else "unknown error"
+                logger.error(f"FFmpeg failed for {camera_angle} (return code {ffmpeg_process.returncode}): {stderr_str[:500]}")
+                return False
+            logger.info(f"FFmpeg encoding complete for {camera_angle}")
+        except subprocess.TimeoutExpired:
+            logger.error(f"FFmpeg timeout for {camera_angle}")
+            ffmpeg_process.kill()
+            return False
+    else:
+        out.release()
 
     # Verify output
     if not output_video.exists():
@@ -368,6 +471,7 @@ async def render_dual_overlay(
     start_frame: int,
     end_frame: int,
     config: OverlayConfig | None = None,
+    duplication_factor: int = 4,
 ) -> tuple[bool, bool]:
     """Render annotated overlays for both camera angles in parallel.
     
@@ -404,7 +508,8 @@ async def render_dual_overlay(
             start_frame,
             end_frame,
             "face_on",
-            config
+            config,
+            duplication_factor
         )
     )
     
@@ -418,7 +523,8 @@ async def render_dual_overlay(
             start_frame,
             end_frame,
             "down_the_line",
-            config
+            config,
+            duplication_factor
         )
     )
     

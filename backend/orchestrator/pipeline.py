@@ -547,6 +547,9 @@ async def _phase7_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
         enable_90fps=False,  # Disable 90fps to preserve slowmo effect (4x frame duplication with input FPS)
         quality_preset="high",  # High quality for better results
         enable_interpolation=False,  # Can be enabled for even smoother motion
+        target_resolution=(528, 480),  # Scale to landscape 528×480 (from portrait input)
+        crf_quality=23,  # H.264 CRF 23 (good balance of quality/compression, ~800kbps target)
+        use_ffmpeg=True,  # Use FFmpeg for better H.264 compression with CRF support
     )
     
     session_dir = storage.session_dir(session.session_id)
@@ -779,7 +782,8 @@ async def _phase8_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
                 session_json=session,
                 start_frame=session.backswing_start_frame_index,
                 end_frame=session.follow_through_end_frame_index,
-                config=config
+                config=config,
+                duplication_factor=4
             )
 
             # Verify final combined videos were created
@@ -885,7 +889,8 @@ async def _phase8_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
                 start_frame=session.backswing_start_frame_index,
                 end_frame=session.follow_through_end_frame_index,
                 camera_angle=camera_angle,
-                config=config
+                config=config,
+                duplication_factor=4
             )
 
             elapsed_ms = int((time.monotonic() - start_time) * 1000)
