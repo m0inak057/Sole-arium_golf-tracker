@@ -64,6 +64,8 @@ async def get_session_status(
         progress_pct=get_progress_pct(session.status),
         status_reason=session.status_reason,
         failed=session.status == "failed",
+        total_swing_attempts=session.total_swing_attempts,
+        all_swing_attempts=session.all_swing_attempts,
     )
 
 
@@ -126,6 +128,8 @@ async def get_dual_video_session_status(
         status_reason=session.status_reason,
         failed=session.status == "failed",
         overlay_rendering_failed=session.overlay_rendering_failed,
+        total_swing_attempts=session.total_swing_attempts,
+        all_swing_attempts=session.all_swing_attempts,
     )
 
 

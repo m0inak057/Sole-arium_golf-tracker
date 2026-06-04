@@ -32,6 +32,7 @@ from backend.orchestrator.overlay_renderer import (
     draw_angle_overlay_stance,
     draw_bottom_hud,
     draw_phase_label,
+    draw_club_path_trail,
 )
 from backend.phase8.overlay import render_overlay
 
@@ -83,18 +84,18 @@ def sample_session():
     """Create mock session with metrics."""
     session = MagicMock()
     session.metrics = {
-        "x_factor": MagicMock(value=35.0, unit="°"),
-        "spine_deviation_max": MagicMock(value=3.2, unit="°"),
-        "wrist_lag": MagicMock(value=22.5, unit="°"),
-        "knee_flex_right": MagicMock(value=45.0, unit="°"),
+        "x_factor": MagicMock(value=35.0, unit="deg"),
+        "spine_deviation_max": MagicMock(value=3.2, unit="deg"),
+        "wrist_lag": MagicMock(value=22.5, unit="deg"),
+        "knee_flex_right": MagicMock(value=45.0, unit="deg"),
         "stance_width": MagicMock(value=22.5, unit='"'),
         "hip_sway": MagicMock(value=5.0, unit="cm"),
         "head_sway": MagicMock(value=3.0, unit="cm"),
-        "hip_turn": MagicMock(value=50.0, unit="°"),
-        "shoulder_turn": MagicMock(value=75.0, unit="°"),
-        "side_bend": MagicMock(value=8.0, unit="°"),
-        "hips_open": MagicMock(value=25.0, unit="°"),
-        "knee_flex_left": MagicMock(value=40.0, unit="°"),
+        "hip_turn": MagicMock(value=50.0, unit="deg"),
+        "shoulder_turn": MagicMock(value=75.0, unit="deg"),
+        "side_bend": MagicMock(value=8.0, unit="deg"),
+        "hips_open": MagicMock(value=25.0, unit="deg"),
+        "knee_flex_left": MagicMock(value=40.0, unit="deg"),
         "tempo_ratio": MagicMock(value=3.2, unit=":1"),
     }
     session.active_thresholds = {}
@@ -442,6 +443,7 @@ class TestPhase8Properties:
             lambda f: draw_skeleton(f, {11: (640, 360, 0.95)}),
             lambda f: draw_joint_dots(f, {0: (640, 360, 0.95)}),
             lambda f: draw_phase_label(f, "Phase 8", "face_on"),
+            lambda f: draw_club_path_trail(f, [(100, 100), (200, 200)], "face_on"),
         ]
         
         for func in functions:
@@ -458,3 +460,28 @@ class TestPhase8Properties:
         # Should return frame unchanged or with minimal changes
         assert frame1.shape == test_frame.shape
         assert frame2.shape == test_frame.shape
+
+
+class TestClubPathTrail:
+    """Test club path trail (wrist path) visualization."""
+    
+    def test_draw_club_path_trail_preserves_dimensions(self, test_frame):
+        """draw_club_path_trail should preserve frame dimensions."""
+        h, w = test_frame.shape[:2]
+        trail = [(100, 100), (120, 110), (140, 130)]
+        result = draw_club_path_trail(test_frame.copy(), trail, "face_on")
+        assert result.shape[:2] == (h, w)
+
+    def test_draw_club_path_trail_graceful_on_short_trail(self, test_frame):
+        """draw_club_path_trail should return original frame if trail is too short."""
+        original = test_frame.copy()
+        result = draw_club_path_trail(original, [(100, 100)], "face_on")
+        assert np.array_equal(original, result)
+
+    def test_draw_club_path_trail_different_camera_angles(self, test_frame):
+        """draw_club_path_trail should accept face_on and down_the_line."""
+        trail = [(100, 100), (120, 110), (140, 130)]
+        res_fo = draw_club_path_trail(test_frame.copy(), trail, "face_on")
+        res_dtl = draw_club_path_trail(test_frame.copy(), trail, "down_the_line")
+        assert res_fo.shape == test_frame.shape
+        assert res_dtl.shape == test_frame.shape

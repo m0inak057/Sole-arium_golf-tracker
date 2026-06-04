@@ -26,4 +26,5 @@ class HitDetectionResult(BaseModel):
     impact_frame_index: int | None
     follow_through_end_frame_index: int | None
     address_frame_range: list[int] | None
+    all_attempts: list[SwingAttempt] = []  # All detected real swings
 

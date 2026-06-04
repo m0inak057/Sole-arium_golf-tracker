@@ -46,10 +46,15 @@ def extract_keypoints(
     data = []
     
     cap.set(cv2.CAP_PROP_POS_FRAMES, eff_start)
+    consecutive_empty = 0
     for frame_idx in range(eff_start, eff_end + 1):
         ret, frame = cap.read()
         if not ret or frame is None:
-            break
+            consecutive_empty += 1
+            if consecutive_empty > 5:
+                break
+            continue
+        consecutive_empty = 0
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         result = pose.process(rgb)

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,8 @@ from backend.orchestrator.overlay_renderer import (
     draw_angle_overlay_wrist_lag,
     draw_angle_overlay_knee,
     draw_angle_overlay_stance,
+    draw_angle_overlays_with_deoverlap,
+    draw_club_path_trail,
     draw_bottom_hud,
     draw_phase_label,
 )
@@ -322,10 +325,27 @@ def render_overlay(
     # Get angle-specific overlays
     angle_overlays = get_angle_specific_overlays(camera_angle, metrics, thresholds)
 
+    # Slowmo critical window boundaries (in slowmo frame space)
+    slowmo_critical_end = start_frame + (end_frame - start_frame + 1) * duplication_factor - 1
+
     # Seek to first frame (start of entire video, not critical window)
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     current_frame = 0
     frame_count = 0
+
+    # ── Performance optimisation: pre-build O(1) frame lookup dict ──────────
+    # Replaces the per-frame O(N) df[df["frame_index"] == f] scan.
+    frame_kpt_map: dict[int, list[dict]] = {}
+    for _, row in df.iterrows():
+        fidx = int(row["frame_index"])
+        if fidx not in frame_kpt_map:
+            frame_kpt_map[fidx] = []
+        frame_kpt_map[fidx].append(row)
+
+    # ── Wrist trail for club-path visualisation (last 30 positions) ──────────
+    # Right wrist = landmark 16.  We track pixel coords in slowmo-frame space.
+    _WRIST_LM = 16
+    wrist_trail: deque[tuple[int, int]] = deque(maxlen=30)
 
     # Main rendering loop - process ENTIRE video
     while current_frame < actual_total_frames:
@@ -335,27 +355,29 @@ def render_overlay(
             break
 
         # Only apply overlays if we're in the critical window (in slowmo frame space)
-        slowmo_critical_end = start_frame + (end_frame - start_frame + 1) * duplication_factor - 1
         if start_frame <= current_frame <= slowmo_critical_end:
             # Map slowmo frame index back to original frame index for keypoint lookup
             original_frame = _slowmo_to_original_frame(
                 current_frame, start_frame, end_frame, duplication_factor
             )
-            # Get keypoints for this frame from parquet
-            frame_kpts = df[df["frame_index"] == original_frame]
+            # Get keypoints for this frame from pre-built O(1) lookup map
 
-            if not frame_kpts.empty:
+            if original_frame in frame_kpt_map:
                 # Build keypoint dict: {landmark_id: (x_px, y_px, visibility)}
                 keypoints_dict: dict[int, tuple[float, float, float]] = {}
 
-                for _, row in frame_kpts.iterrows():
+                for row in frame_kpt_map[original_frame]:
                     landmark_id = int(row["landmark_id"])
-                    # Convert normalized coords to pixels
                     x_px = float(row["x"]) * width
                     y_px = float(row["y"]) * height
                     visibility = float(row["visibility"])
-
                     keypoints_dict[landmark_id] = (x_px, y_px, visibility)
+
+                # Update wrist trail (only when wrist is visible)
+                if _WRIST_LM in keypoints_dict:
+                    wx, wy, wvis = keypoints_dict[_WRIST_LM]
+                    if wvis > 0.4:
+                        wrist_trail.append((int(wx), int(wy)))
 
                 # ─── ENHANCED RENDERING ORDER (back to front) ────────────────────
 
@@ -363,37 +385,37 @@ def render_overlay(
                 if config.show_skeleton:
                     frame = draw_skeleton(frame, keypoints_dict)
 
+                # 1b. Wrist path trail (drawn above skeleton, below dots)
+                if len(wrist_trail) >= 2:
+                    frame = draw_club_path_trail(
+                        frame, list(wrist_trail), camera_angle
+                    )
+
                 # 2. Joint dots (if enabled)
                 if config.show_joint_dots:
                     frame = draw_joint_dots(frame, keypoints_dict)
 
-                # 3. Angle-specific overlays (if enabled)
+                # 3. Angle-specific overlays with global label de-overlap (if enabled)
                 if config.show_angle_overlays:
-                    # Draw overlays based on camera angle optimization
-                    if camera_angle == "face_on":
-                        # Face-on specific overlays
-                        frame = draw_angle_overlay_xfactor(frame, keypoints_dict, angle_overlays.get("x_factor"), thresholds)
-                        frame = draw_angle_overlay_spine(frame, keypoints_dict, angle_overlays.get("spine_deviation"), thresholds)
-                        frame = draw_angle_overlay_stance(frame, keypoints_dict, angle_overlays.get("stance_width"), thresholds)
-                        frame = draw_angle_overlay_knee(frame, keypoints_dict, angle_overlays.get("knee_flex"), thresholds)
-                    elif camera_angle == "down_the_line":
-                        # Down-the-line specific overlays
-                        frame = draw_angle_overlay_wrist_lag(frame, keypoints_dict, angle_overlays.get("wrist_lag"), thresholds)
-                        # Additional DTL-specific overlays can be added here
-                    else:
-                        # Default: show all overlays
-                        frame = draw_angle_overlay_xfactor(frame, keypoints_dict, angle_overlays.get("x_factor"), thresholds)
-                        frame = draw_angle_overlay_spine(frame, keypoints_dict, angle_overlays.get("spine_deviation"), thresholds)
-                        frame = draw_angle_overlay_wrist_lag(frame, keypoints_dict, angle_overlays.get("wrist_lag"), thresholds)
-                        frame = draw_angle_overlay_knee(frame, keypoints_dict, angle_overlays.get("knee_flex"), thresholds)
-                        frame = draw_angle_overlay_stance(frame, keypoints_dict, angle_overlays.get("stance_width"), thresholds)
+                    frame = draw_angle_overlays_with_deoverlap(
+                        frame,
+                        keypoints_dict,
+                        angle_overlays,
+                        thresholds,
+                        camera_angle,
+                    )
 
             # 4. HUD panel (if enabled, only in critical window)
             if config.show_hud:
-                frame = draw_bottom_hud(frame, session_json, current_frame, end_frame)
+                frame = draw_bottom_hud(
+                    frame, session_json, current_frame, actual_total_frames,
+                    camera_angle=camera_angle,
+                    start_frame=start_frame,
+                    end_frame=slowmo_critical_end,
+                )
 
-            # 5. Phase label with camera angle (if enabled, only in critical window)
-            if config.show_phase_label:
+            # 5. Phase label with camera angle (if enabled and HUD is not shown)
+            if config.show_phase_label and not config.show_hud:
                 label_text = f"Phase 8: {camera_angle.replace('_', '-').title()} Overlay"
                 frame = draw_phase_label(frame, label_text, camera_angle)
 

@@ -20,11 +20,13 @@ from backend.core.logging import get_logger
 logger = get_logger(__name__)
 
 
-def run_hit_detection(video_path: Path) -> HitDetectionResult:
+def run_hit_detection(video_path: Path, frame_stride: int = 2) -> HitDetectionResult:
     """Run the Phase 1 hit detection over the given video.
 
     Args:
         video_path: Path to the input video.
+        frame_stride: Process every Nth frame for speed (default=2 for ~2× speedup).
+            Peak indices are rescaled back to original frame space.
 
     Returns:
         A ``HitDetectionResult`` populated with candidate swing info.
@@ -34,7 +36,8 @@ def run_hit_detection(video_path: Path) -> HitDetectionResult:
         raise ValueError(f"Could not open video {video_path}")
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    
+    stride_fps = fps / frame_stride  # effective fps for signal
+
     pose = mp_pose.Pose(static_image_mode=False, model_complexity=1)
 
     wrist_speeds: list[float] = []
@@ -44,59 +47,63 @@ def run_hit_detection(video_path: Path) -> HitDetectionResult:
     prev_gray: np.ndarray | None = None
     prev_wrist_y: float | None = None
 
+    frame_idx = 0
     while True:
         ret, frame = cap.read()
         if not ret or frame is None:
             break
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
-        # 1. Optical flow
-        if prev_gray is not None:
-            flow_mag = compute_frame_flow_magnitude(prev_gray, gray)
-        else:
-            flow_mag = 0.0
-        flow_mags.append(flow_mag)
-        prev_gray = gray
+        # Only process every Nth frame for speed
+        if frame_idx % frame_stride == 0:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        # 2. Keypoints (Wrist speed, Hip drop)
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        result = pose.process(rgb)
+            # 1. Optical flow (compare against previous processed frame)
+            if prev_gray is not None:
+                flow_mag = compute_frame_flow_magnitude(prev_gray, gray)
+            else:
+                flow_mag = 0.0
+            flow_mags.append(flow_mag)
+            prev_gray = gray
 
-        wrist_speed = 0.0
-        hip_drop = 0.0
+            # 2. Keypoints (Wrist speed, Hip drop)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            result = pose.process(rgb)
 
-        if result.pose_landmarks:
-            lms = result.pose_landmarks.landmark
-            # Indices: left_wrist 15, right_wrist 16
-            # Use average y-position of wrists for simple speed proxy
-            curr_wrist_y = (lms[15].y + lms[16].y) / 2.0
-            if prev_wrist_y is not None:
-                # Speed as absolute vertical pixel delta (normalized 0-1 coordinate space, so we use direct delta)
-                wrist_speed = abs(curr_wrist_y - prev_wrist_y)
-            prev_wrist_y = curr_wrist_y
+            wrist_speed = 0.0
+            hip_drop = 0.0
 
-            # Indices: left_hip 23, right_hip 24
-            # Hip drop is amount hips move DOWN (higher y value)
-            hip_drop = (lms[23].y + lms[24].y) / 2.0
-            # To actually make it a drop, we might just look at variance or raw down-movement.
-            # Storing raw hip avg y, the segmenter will normalize it.
+            if result.pose_landmarks:
+                lms = result.pose_landmarks.landmark
+                curr_wrist_y = (lms[15].y + lms[16].y) / 2.0
+                if prev_wrist_y is not None:
+                    wrist_speed = abs(curr_wrist_y - prev_wrist_y)
+                prev_wrist_y = curr_wrist_y
+                hip_drop = (lms[23].y + lms[24].y) / 2.0
 
-        wrist_speeds.append(wrist_speed)
-        hip_drops.append(hip_drop)
+            wrist_speeds.append(wrist_speed)
+            hip_drops.append(hip_drop)
+
+        frame_idx += 1
 
     cap.release()
     pose.close()
 
-    # If hips didn't drop, maybe relative hip movement
-    # Let's clean up hip drops so they are derivatives too
+    # Clean up hip drops — convert to deltas (downward movement only)
     filtered_hip_drops = [0.0]
     for i in range(1, len(hip_drops)):
         # Positive drop is when current y > prev y (moving down)
         delta = hip_drops[i] - hip_drops[i-1]
         filtered_hip_drops.append(delta if delta > 0 else 0.0)
 
-    attempts = segment_and_score_swings(wrist_speeds, filtered_hip_drops, flow_mags, fps)
+    attempts = segment_and_score_swings(wrist_speeds, filtered_hip_drops, flow_mags, stride_fps)
+
+    # Rescale peak frame indices from stride space back to original frame space
+    for a in attempts:
+        a.backswing_start_frame_index *= frame_stride
+        a.impact_frame_index *= frame_stride
+        a.follow_through_end_frame_index *= frame_stride
+        a.address_frame_range = [a.address_frame_range[0] * frame_stride,
+                                  a.address_frame_range[1] * frame_stride]
 
     real_attempts = [a for a in attempts if a.is_real]
     if not real_attempts:
@@ -112,6 +119,7 @@ def run_hit_detection(video_path: Path) -> HitDetectionResult:
                 impact_frame_index=None,
                 follow_through_end_frame_index=None,
                 address_frame_range=None,
+                all_attempts=[],
             )
     else:
         best = max(real_attempts, key=lambda x: x.score)
@@ -124,5 +132,7 @@ def run_hit_detection(video_path: Path) -> HitDetectionResult:
         impact_frame_index=best.impact_frame_index,
         follow_through_end_frame_index=best.follow_through_end_frame_index,
         address_frame_range=best.address_frame_range,
+        all_attempts=real_attempts if real_attempts else [best],
     )
+
 

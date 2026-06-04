@@ -66,6 +66,18 @@ class MetricEntry(BaseModel):
     null_reason: str | None = None
 
 
+class SwingWindow(BaseModel):
+    """One detected swing stored in all_swing_attempts."""
+
+    index: int
+    score: float
+    backswing_start: int
+    impact: int
+    follow_through_end: int
+    address_start: int
+    address_end: int
+
+
 class SetupMetrics(BaseModel):
     """Phase 3 output — setup geometry at address."""
 
@@ -223,6 +235,7 @@ class SessionJSON(BaseModel):
     impact_frame_index: int | None = None
     follow_through_end_frame_index: int | None = None
     address_frame_range: list[int] | None = None
+    all_swing_attempts: list[SwingWindow] | None = None  # All detected real swings
 
     # ── Set by Agent 2 (Body Calibration) ────────────────────────────
     px_to_inches_scale: float | None = None

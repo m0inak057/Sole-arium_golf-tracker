@@ -407,6 +407,10 @@ def _write_video_ffmpeg(
             text=False,
         )
 
+        if process.stdin is None:
+            logger.error("FFmpeg stdin pipe is None")
+            return False
+
         # Write frames to FFmpeg stdin
         frame_bytes_written = 0
         for i, frame in enumerate(frames):
@@ -480,7 +484,7 @@ def _write_video_opencv(
         return False
 
     try:
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore
         writer = cv2.VideoWriter(
             str(output_path),
             fourcc,

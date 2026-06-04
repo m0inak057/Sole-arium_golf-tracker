@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from backend.core.session import SwingWindow
+
 
 # ─── Session ─────────────────────────────────────────────────────────────────
 
@@ -28,6 +30,8 @@ class SessionStatusResponse(BaseModel):
     progress_pct: int
     status_reason: str | None = None
     failed: bool = False
+    total_swing_attempts: int | None = None
+    all_swing_attempts: list[SwingWindow] | None = None
 
 
 # ─── Error ───────────────────────────────────────────────────────────────────
@@ -166,6 +170,8 @@ class DualVideoSessionStatusResponse(BaseModel):
     status_reason: str | None = None
     failed: bool = False
     overlay_rendering_failed: bool = False
+    total_swing_attempts: int | None = None
+    all_swing_attempts: list[SwingWindow] | None = None
 
 
 class VideoStreamingResponse(BaseModel):

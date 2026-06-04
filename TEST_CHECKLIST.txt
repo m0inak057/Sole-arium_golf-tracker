@@ -1,0 +1,155 @@
+================================================================================
+SKELETON OVERLAY SYNC FIX - BROWSER TEST CHECKLIST
+================================================================================
+
+SESSION ID: 56fc69a7-3412-4233-95b8-59df86d1408c
+
+================================================================================
+STEP 1: OPEN ANNOTATED VIDEO IN BROWSER
+================================================================================
+
+Copy and paste this URL into your browser address bar:
+
+http://localhost:8000/api/output/56fc69a7-3412-4233-95b8-59df86d1408c/annotated/face-on
+
+Press Enter and wait for the video to load.
+
+================================================================================
+STEP 2: VERIFY VIDEO PROPERTIES
+================================================================================
+
+Once the video loads in the browser player:
+
+[ ] Video is LANDSCAPE orientation (wider than tall)
+[ ] Video appears to be 528x480 resolution
+[ ] Video title/metadata shows it's a golf swing analysis
+[ ] Video player controls are visible (play, pause, timeline)
+
+================================================================================
+STEP 3: PLAY VIDEO AND CHECK SKELETON TRACKING (CRITICAL TEST)
+================================================================================
+
+Press PLAY and watch the skeleton overlay:
+
+TRACKING ACCURACY:
+[ ] Skeleton dots/joints are VISIBLE on the body
+[ ] Joint dots stay ON the body parts (not floating away)
+[ ] Skeleton accurately follows arm movement during swing
+[ ] Skeleton accurately follows leg movement during swing
+[ ] Skeleton torso tracking matches actual body position
+[ ] NO skeleton dots are completely off-screen
+
+TIMING & COVERAGE:
+[ ] Skeleton appears at START of swing (backswing begins)
+[ ] Skeleton continues THROUGHOUT the swing motion
+[ ] Skeleton visible at END of swing (follow-through)
+[ ] NO gaps where skeleton disappears mid-swing
+[ ] Overlays cover the ENTIRE critical window (not just first 50 frames)
+
+MOTION QUALITY:
+[ ] Skeleton moves SMOOTHLY without jumping
+[ ] NO sudden teleportation of joints between frames
+[ ] Motion follows natural body movement
+[ ] 4x frame duplication creates smooth slowmo effect
+
+================================================================================
+STEP 4: VERIFY VIDEO QUALITY
+================================================================================
+
+[ ] Video plays WITHOUT stuttering or lag
+[ ] Image is CLEAR without pixelation
+[ ] NO compression artifacts or color banding
+[ ] Slowmo effect is noticeable (swing is slowed down)
+[ ] HUD metrics/text are readable
+
+================================================================================
+STEP 5: COMPARE WITH SLOWMO BASELINE (Optional)
+================================================================================
+
+To see the difference, open the slowmo-only video:
+
+http://localhost:8000/api/output/56fc69a7-3412-4233-95b8-59df86d1408c/slowmo/face-on
+
+This is without overlays. Compare:
+[ ] Annotated video has skeleton overlay visible
+[ ] Slowmo baseline has NO skeleton overlay
+[ ] Both have same resolution and duration
+[ ] Annotated video's skeleton tracking looks correct
+
+================================================================================
+STEP 6: FINAL ASSESSMENT
+================================================================================
+
+THE FIX IS WORKING CORRECTLY IF:
+
+[ ] Skeleton dots accurately track the body throughout the swing
+[ ] NO offset between actual body position and drawn skeleton
+[ ] Overlays appear for the entire swing duration
+[ ] Smooth motion without jumping or teleporting
+[ ] Proper 528x480 landscape resolution
+[ ] File size is reasonable (~1.7 MB)
+
+================================================================================
+EXPECTED OUTCOME
+================================================================================
+
+Before the fix:
+  - Skeleton dots were at WRONG positions (not on body)
+  - Overlays only appeared first ~50 frames then disappeared
+  - File size was 16 MB (too large)
+
+After the fix (WHAT YOU SHOULD SEE):
+  - Skeleton dots track the body ACCURATELY throughout the swing
+  - Overlays appear from START to FINISH of swing
+  - File size is 1.7 MB (excellent compression)
+
+================================================================================
+ISSUES TO REPORT
+================================================================================
+
+If you see ANY of these, please report:
+
+PROBLEM: Skeleton dots are completely off the body
+LIKELY CAUSE: Frame mapping still not working
+SOLUTION: Need to debug _slowmo_to_original_frame() function
+
+PROBLEM: Overlays only appear in first ~50 frames
+LIKELY CAUSE: Critical window guard not fixed
+SOLUTION: Check slowmo_critical_end calculation
+
+PROBLEM: Skeleton jumps around randomly
+LIKELY CAUSE: Frame index lookup is returning wrong frames
+SOLUTION: Verify original_frame mapping is working
+
+PROBLEM: Video is in portrait orientation (taller than wide)
+LIKELY CAUSE: Phase 7 scaling didn't apply
+SOLUTION: Check calculate_landscape_resolution() in Phase 7
+
+PROBLEM: File size is still 16 MB
+LIKELY CAUSE: FFmpeg compression not being used
+SOLUTION: Check if FFmpeg is installed and subprocess is working
+
+================================================================================
+HOW TO REPORT RESULTS
+================================================================================
+
+Tell me:
+1. Did the skeleton dots track the body correctly? (YES/NO)
+2. Did overlays appear throughout the entire swing? (YES/NO)
+3. Was the video smooth and clear? (YES/NO)
+4. What was the video resolution? (528x480?)
+5. Any specific issues you noticed?
+
+================================================================================
+SUMMARY
+================================================================================
+
+Pre-test checks: ALL PASSED
+- Resolution: 528x480 (correct)
+- File size: 1.7 MB (excellent)
+- Bitrate: 735 kbps (good compression)
+- Duration: 19.1s (slowmo effect expected)
+
+Status: READY FOR BROWSER TESTING
+
+Next action: Open the browser URL above and verify the skeleton tracking

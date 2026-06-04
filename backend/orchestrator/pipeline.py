@@ -293,10 +293,26 @@ async def _phase1_stub(session: SessionJSON, storage: LocalStorage) -> SessionJS
     session.follow_through_end_frame_index = result.follow_through_end_frame_index
     session.address_frame_range = result.address_frame_range
 
+    # Store ALL detected real swings for the multi-swing picker
+    from backend.core.session import SwingWindow
+    session.all_swing_attempts = [
+        SwingWindow(
+            index=a.attempt_index,
+            score=a.score,
+            backswing_start=a.backswing_start_frame_index,
+            impact=a.impact_frame_index,
+            follow_through_end=a.follow_through_end_frame_index,
+            address_start=a.address_frame_range[0],
+            address_end=a.address_frame_range[1],
+        )
+        for a in result.all_attempts
+    ]
+
     if result.total_swing_attempts == 0 or result.selected_swing_index is None:
         raise RuntimeError("no_real_swing_detected")
 
     return session
+
 
 
 async def _agent2_stub(session: SessionJSON, storage: LocalStorage) -> SessionJSON:

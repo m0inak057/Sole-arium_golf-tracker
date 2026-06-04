@@ -108,8 +108,142 @@ def _draw_arc_degrees(frame: np.ndarray, center: tuple[int, int], radius: int,
     return frame
 
 
+def _draw_label_with_bg(
+    frame: np.ndarray,
+    text: str,
+    x: int,
+    y: int,
+    color: tuple[int, int, int],
+    font_scale: float = 0.6,
+    thickness: int = 1,
+) -> np.ndarray:
+    """Draw a text label with a semi-transparent black background rectangle.
+
+    Args:
+        frame: BGR image array.
+        text: Label text.
+        x: Baseline x-coordinate of the text.
+        y: Baseline y-coordinate of the text.
+        color: BGR text color.
+        font_scale: OpenCV font scale.
+        thickness: Text thickness.
+
+    Returns:
+        Frame with label drawn.
+    """
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    (tw, th), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+    pad = 3
+    # Draw filled dark rectangle behind text
+    cv2.rectangle(
+        frame,
+        (x - pad, y - th - pad),
+        (x + tw + pad, y + baseline + pad),
+        (0, 0, 0),
+        -1,
+    )
+    cv2.putText(frame, text, (x, y), font, font_scale, color, thickness)
+    return frame
+
+
+def _resolve_label_positions(
+    proposals: list[tuple[int, int, str, tuple[int, int, int]]],
+) -> list[tuple[int, int, str, tuple[int, int, int]]]:
+    """Resolve vertical overlaps among label proposals by shifting down.
+
+    Labels are sorted by y and then nudged downwards when they would overlap
+    (within 20px of the previous label's baseline).
+
+    Args:
+        proposals: List of (x, y, text, color) tuples.
+
+    Returns:
+        Adjusted list with the same order but de-overlapped y values.
+    """
+    if not proposals:
+        return proposals
+
+    # Sort by y so we process top-to-bottom
+    sorted_proposals = sorted(proposals, key=lambda p: p[1])
+    resolved: list[tuple[int, int, str, tuple[int, int, int]]] = []
+    min_gap = 20  # px
+
+    prev_y: int | None = None
+    for x, y, text, color in sorted_proposals:
+        if prev_y is not None and y - prev_y < min_gap:
+            y = prev_y + min_gap
+        resolved.append((x, y, text, color))
+        prev_y = y
+
+    return resolved
+
+
 # ─── Public Rendering Functions ──────────────────────────────────────────────
-# Rendering order: skeleton → dots → overlays → HUD (strict order)
+# Rendering order: skeleton → trail → dots → overlays → HUD (strict order)
+
+
+def draw_club_path_trail(
+    frame: np.ndarray,
+    trail: list[tuple[int, int]],
+    camera_angle: str = "face_on",
+) -> np.ndarray:
+    """Draw a fading wrist-path trail representing the club path arc.
+
+    The trail is labelled "Wrist Path" (MediaPipe tracks the wrist, which is
+    the closest available proxy to the club head).  Older points fade towards
+    transparent; the newest point shows a bright dot.
+
+    Args:
+        frame: BGR image array (modified in-place, also returned).
+        trail: List of (x, y) pixel positions, oldest first, newest last.
+            Typically the last 30 wrist positions inside the critical window.
+        camera_angle: "face_on" draws cyan; "down_the_line" draws magenta.
+
+    Returns:
+        Frame with the trail drawn.
+    """
+    if len(trail) < 2:
+        return frame
+
+    # Base colour: cyan for face-on, magenta for DTL
+    base_color = (255, 255, 0) if camera_angle == "face_on" else (255, 0, 255)
+
+    n = len(trail)
+    overlay = frame.copy()
+
+    for i in range(1, n):
+        # Alpha ramps from 0.15 (oldest segment) to 1.0 (newest segment)
+        alpha = 0.15 + 0.85 * (i / (n - 1))
+        # Thickness ramps from 1 (oldest) to 3 (newest)
+        thickness = max(1, int(1 + 2 * (i / (n - 1))))
+
+        pt1 = trail[i - 1]
+        pt2 = trail[i]
+        cv2.line(overlay, pt1, pt2, base_color, thickness, cv2.LINE_AA)
+
+        # Blend this segment's line into the main frame
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+        # Reset overlay for the next segment
+        overlay = frame.copy()
+
+    # Bright dot at the current (newest) wrist position
+    cv2.circle(frame, trail[-1], radius=5, color=base_color, thickness=-1)
+
+    # Small "Wrist Path" label near the trail head — offset to avoid keypoint dots
+    lx, ly = trail[-1]
+    label_x = min(lx + 12, frame.shape[1] - 90)
+    label_y = max(ly - 10, 14)
+    cv2.putText(
+        frame, "Wrist Path",
+        (label_x, label_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.40,
+        base_color,
+        1,
+        cv2.LINE_AA,
+    )
+
+    return frame
 
 
 def draw_skeleton(frame: np.ndarray, keypoints: dict[int, tuple[float, float, float]]) -> np.ndarray:
@@ -158,7 +292,8 @@ def draw_joint_dots(frame: np.ndarray, keypoints: dict[int, tuple[float, float, 
 
 def draw_angle_overlay_xfactor(
     frame: np.ndarray, keypoints: dict[int, tuple[float, float, float]], 
-    x_factor_deg: float | None, thresholds: Any
+    x_factor_deg: float | None, thresholds: Any,
+    label_proposals: list | None = None,
 ) -> np.ndarray:
     """Draw X-Factor arc overlay.
 
@@ -167,6 +302,7 @@ def draw_angle_overlay_xfactor(
         keypoints: Landmark dict.
         x_factor_deg: Measured X-Factor in degrees, or None.
         thresholds: Active thresholds dict.
+        label_proposals: Optional list to collect (x, y, text, color) instead of drawing immediately.
 
     Returns:
         Frame with X-Factor overlay.
@@ -196,17 +332,23 @@ def draw_angle_overlay_xfactor(
         radius = 60
         frame = _draw_arc_degrees(frame, center, radius, 0, int(x_factor_deg), color, thickness=3)
         
-        # Draw text label
-        cv2.putText(frame, f"X-Factor: {x_factor_deg:.1f}°", 
-                   (int(hip_x) - 80, int(hip_y) - 80),
-                   cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 2)
+        # Collect label proposal for deferred drawing
+        lbl_x = max(0, int(hip_x) + 30)
+        lbl_y = max(20, int(hip_y) - 70)
+        if label_proposals is not None:
+            label_proposals.append((lbl_x, lbl_y, f"X-Factor: {x_factor_deg:.1f}deg", color))
+        else:
+            frame = _draw_label_with_bg(
+                frame, f"X-Factor: {x_factor_deg:.1f}deg", lbl_x, lbl_y, color, font_scale=0.6, thickness=1
+            )
     
     return frame
 
 
 def draw_angle_overlay_spine(
     frame: np.ndarray, keypoints: dict[int, tuple[float, float, float]], 
-    spine_dev_deg: float | None, thresholds: Any
+    spine_dev_deg: float | None, thresholds: Any,
+    label_proposals: list | None = None,
 ) -> np.ndarray:
     """Draw spine deviation axis line overlay.
 
@@ -215,6 +357,7 @@ def draw_angle_overlay_spine(
         keypoints: Landmark dict.
         spine_dev_deg: Spine deviation in degrees.
         thresholds: Active thresholds dict.
+        label_proposals: Optional list to collect (x, y, text, color) instead of drawing immediately.
 
     Returns:
         Frame with spine overlay.
@@ -225,24 +368,30 @@ def draw_angle_overlay_spine(
     nose_x, nose_y, _ = keypoints[0]
     hip_x, hip_y, _ = keypoints[23]
     
-    # Get color: green if < 5°, else red (per PRD §8)
+    # Get color: green if < 5 deg, else red (per PRD §8)
     color = (0, 255, 0) if spine_dev_deg < 5.0 else (0, 0, 255)
     
     # Draw spine line
     cv2.line(frame, (int(nose_x), int(nose_y)), (int(hip_x), int(hip_y)), 
              color=color, thickness=3)
     
-    # Draw label
-    cv2.putText(frame, f"Spine: {spine_dev_deg:.1f}°", 
-               (int(nose_x) - 60, int(nose_y) - 30),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+    # Collect label proposal — anchor LEFT of nose to keep away from X-Factor (right of hips)
+    lbl_x = max(2, int(nose_x) - 120)
+    lbl_y = max(20, int(nose_y) - 10)
+    if label_proposals is not None:
+        label_proposals.append((lbl_x, lbl_y, f"Spine: {spine_dev_deg:.1f}deg", color))
+    else:
+        frame = _draw_label_with_bg(
+            frame, f"Spine: {spine_dev_deg:.1f}deg", lbl_x, lbl_y, color, font_scale=0.6, thickness=1
+        )
     
     return frame
 
 
 def draw_angle_overlay_wrist_lag(
     frame: np.ndarray, keypoints: dict[int, tuple[float, float, float]], 
-    wrist_lag_deg: float | None, thresholds: Any
+    wrist_lag_deg: float | None, thresholds: Any,
+    label_proposals: list | None = None,
 ) -> np.ndarray:
     """Draw wrist lag angle arc overlay.
 
@@ -251,6 +400,7 @@ def draw_angle_overlay_wrist_lag(
         keypoints: Landmark dict.
         wrist_lag_deg: Wrist lag in degrees.
         thresholds: Active thresholds.
+        label_proposals: Optional list to collect (x, y, text, color) instead of drawing immediately.
 
     Returns:
         Frame with wrist lag overlay.
@@ -275,16 +425,23 @@ def draw_angle_overlay_wrist_lag(
     frame = _draw_arc_degrees(frame, (int(wrist_x), int(wrist_y)), radius, 
                               0, min(int(wrist_lag_deg), 90), color, thickness=2)
     
-    cv2.putText(frame, f"Lag: {wrist_lag_deg:.1f}°", 
-               (int(wrist_x) - 50, int(wrist_y) + 60),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    # Collect label proposal for deferred drawing
+    lbl_x = max(0, int(wrist_x) + 30)
+    lbl_y = int(wrist_y) + 10
+    if label_proposals is not None:
+        label_proposals.append((lbl_x, lbl_y, f"Lag: {wrist_lag_deg:.1f}deg", color))
+    else:
+        frame = _draw_label_with_bg(
+            frame, f"Lag: {wrist_lag_deg:.1f}deg", lbl_x, lbl_y, color, font_scale=0.6, thickness=1
+        )
     
     return frame
 
 
 def draw_angle_overlay_knee(
     frame: np.ndarray, keypoints: dict[int, tuple[float, float, float]], 
-    knee_flex_deg: float | None, thresholds: Any
+    knee_flex_deg: float | None, thresholds: Any,
+    label_proposals: list | None = None,
 ) -> np.ndarray:
     """Draw knee flex overlay.
 
@@ -293,6 +450,7 @@ def draw_angle_overlay_knee(
         keypoints: Landmark dict.
         knee_flex_deg: Knee flex in degrees.
         thresholds: Active thresholds dict.
+        label_proposals: Optional list to collect (x, y, text, color) instead of drawing immediately.
 
     Returns:
         Frame with knee overlay.
@@ -315,18 +473,26 @@ def draw_angle_overlay_knee(
     
     color = _get_color_for_threshold(knee_flex_deg, green_range, None)
     
-    # Draw knee indicator
+    # Draw knee indicator circle
     cv2.circle(frame, (int(knee_x), int(knee_y)), radius=25, color=color, thickness=2)
-    cv2.putText(frame, f"Knee: {knee_flex_deg:.0f}°", 
-               (int(knee_x) - 50, int(knee_y)),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+    # Collect label proposal — anchor LEFT of knee to keep away from Stance (centred below)
+    lbl_x = max(2, int(knee_x) - 120)
+    lbl_y = int(knee_y) + 10
+    if label_proposals is not None:
+        label_proposals.append((lbl_x, lbl_y, f"Knee: {knee_flex_deg:.0f}deg", color))
+    else:
+        frame = _draw_label_with_bg(
+            frame, f"Knee: {knee_flex_deg:.0f}deg", lbl_x, lbl_y, color, font_scale=0.6, thickness=1
+        )
     
     return frame
 
 
 def draw_angle_overlay_stance(
     frame: np.ndarray, keypoints: dict[int, tuple[float, float, float]], 
-    stance_inches: float | None, thresholds: Any
+    stance_inches: float | None, thresholds: Any,
+    label_proposals: list | None = None,
 ) -> np.ndarray:
     """Draw stance width bracket overlay.
 
@@ -335,6 +501,7 @@ def draw_angle_overlay_stance(
         keypoints: Landmark dict.
         stance_inches: Stance width in inches.
         thresholds: Active thresholds dict.
+        label_proposals: Optional list to collect (x, y, text, color) instead of drawing immediately.
 
     Returns:
         Frame with stance bracket overlay.
@@ -352,9 +519,9 @@ def draw_angle_overlay_stance(
     threshold_obj = thresholds.get("stance_width", {}) if thresholds else {}
     
     # For stance width, use ratio-based coloring if available
-    color = (100, 100, 255)  # Default orange
+    color = (100, 100, 255)  # Default blue-ish
     
-    # Draw bracket lines at feet
+    # Draw bracket lines at hips (proxy for feet)
     y_bracket = int(max(hip_left_y, hip_right_y) + 30)
     cv2.line(frame, (int(hip_left_x), y_bracket), (int(hip_left_x), y_bracket + 20), 
              color=color, thickness=2)
@@ -363,17 +530,135 @@ def draw_angle_overlay_stance(
     cv2.line(frame, (int(hip_left_x), y_bracket + 20), (int(hip_right_x), y_bracket + 20), 
              color=color, thickness=2)
     
-    # Draw label
+    # Collect label proposal for deferred drawing
     mid_x = int((hip_left_x + hip_right_x) / 2)
-    cv2.putText(frame, f"Stance: {stance_inches:.1f}\"", 
-               (mid_x - 60, y_bracket + 45),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    lbl_x = max(0, mid_x - 50)
+    lbl_y = y_bracket + 45
+    if label_proposals is not None:
+        label_proposals.append((lbl_x, lbl_y, f"Stance: {stance_inches:.1f}\"", color))
+    else:
+        frame = _draw_label_with_bg(
+            frame, f"Stance: {stance_inches:.1f}\"", lbl_x, lbl_y, color, font_scale=0.6, thickness=1
+        )
     
     return frame
 
 
+def draw_angle_overlays_with_deoverlap(
+    frame: np.ndarray,
+    keypoints: dict[int, tuple[float, float, float]],
+    overlays: dict[str, float | None],
+    thresholds: Any,
+    camera_angle: str,
+) -> np.ndarray:
+    """Draw all angle overlays for a camera angle with label de-overlap.
+
+    Collects all label proposals from individual overlay drawers, runs
+    them through vertical de-overlap, then draws them all with background
+    rectangles in one pass.
+
+    Args:
+        frame: BGR image array.
+        keypoints: Landmark dict.
+        overlays: Dict of metric_name → value (e.g. {"x_factor": 19.7}).
+        thresholds: Active thresholds dict.
+        camera_angle: "face_on" or "down_the_line".
+
+    Returns:
+        Frame with all overlays drawn, labels de-overlapped.
+    """
+    label_proposals: list[tuple[int, int, str, tuple[int, int, int]]] = []
+
+    if camera_angle == "face_on":
+        frame = draw_angle_overlay_xfactor(frame, keypoints, overlays.get("x_factor"), thresholds, label_proposals)
+        frame = draw_angle_overlay_spine(frame, keypoints, overlays.get("spine_deviation"), thresholds, label_proposals)
+        frame = draw_angle_overlay_stance(frame, keypoints, overlays.get("stance_width"), thresholds, label_proposals)
+        frame = draw_angle_overlay_knee(frame, keypoints, overlays.get("knee_flex"), thresholds, label_proposals)
+    elif camera_angle == "down_the_line":
+        frame = draw_angle_overlay_wrist_lag(frame, keypoints, overlays.get("wrist_lag"), thresholds, label_proposals)
+    else:
+        frame = draw_angle_overlay_xfactor(frame, keypoints, overlays.get("x_factor"), thresholds, label_proposals)
+        frame = draw_angle_overlay_spine(frame, keypoints, overlays.get("spine_deviation"), thresholds, label_proposals)
+        frame = draw_angle_overlay_wrist_lag(frame, keypoints, overlays.get("wrist_lag"), thresholds, label_proposals)
+        frame = draw_angle_overlay_knee(frame, keypoints, overlays.get("knee_flex"), thresholds, label_proposals)
+        frame = draw_angle_overlay_stance(frame, keypoints, overlays.get("stance_width"), thresholds, label_proposals)
+
+    # Fixed per-label colors (no background rects — text directly on frame)
+    # BGR: yellow, orange, red, white, cyan
+    _LABEL_COLORS: dict[str, tuple[int, int, int]] = {
+        "Spine":    (0, 255, 255),   # yellow
+        "X-Factor": (0, 165, 255),   # orange
+        "Knee":     (0, 0, 255),     # red
+        "Stance":   (255, 255, 255), # white
+        "Lag":      (255, 255, 0),   # cyan
+    }
+
+    # De-overlap all label positions globally, then draw plain text
+    resolved = _resolve_label_positions(label_proposals)
+    for lbl_x, lbl_y, text, _unused_color in resolved:
+        # Pick fixed color by matching the label prefix
+        label_color = next(
+            (c for prefix, c in _LABEL_COLORS.items() if text.startswith(prefix)),
+            (200, 200, 200),  # fallback: light grey
+        )
+        cv2.putText(
+            frame, text,
+            (lbl_x, lbl_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,        # font scale
+            label_color,
+            2,           # thickness — bold for visibility without bg
+        )
+
+    return frame
+
+
+def _get_swing_phase_label(
+    current_frame: int,
+    start_frame: int,
+    end_frame: int,
+) -> str:
+    """Compute the current swing phase name from the frame index.
+
+    Zones:
+      - Before start_frame:                       "SETUP / ADDRESS"
+      - 0%–30% of swing window:                   "SWING #1 -> BACKSWING"
+      - 30%–70% of swing window:                  "SWING #1 -> DOWNSWING"
+      - 70%–100% of swing window:                 "FOLLOW THROUGH"
+      - After end_frame:                           "SETUP / BETWEEN SWINGS"
+
+    Args:
+        current_frame: Current slowmo frame index.
+        start_frame: First frame of the critical window.
+        end_frame: Last frame of the critical window.
+
+    Returns:
+        Uppercase phase label string.
+    """
+    if current_frame < start_frame:
+        return "SETUP / ADDRESS"
+    if current_frame > end_frame:
+        return "SETUP / BETWEEN SWINGS"
+
+    swing_len = max(end_frame - start_frame, 1)
+    pct = (current_frame - start_frame) / swing_len
+
+    if pct < 0.30:
+        return "SWING #1 -> BACKSWING"
+    elif pct < 0.70:
+        return "SWING #1 -> DOWNSWING"
+    else:
+        return "FOLLOW THROUGH"
+
+
 def draw_bottom_hud(
-    frame: np.ndarray, session_json: Any, current_frame: int, total_frames: int
+    frame: np.ndarray,
+    session_json: Any,
+    current_frame: int,
+    total_frames: int,
+    camera_angle: str | None = None,
+    start_frame: int = 0,
+    end_frame: int | None = None,
 ) -> np.ndarray:
     """Draw the bottom HUD panel (18–20% of frame height).
 
@@ -382,10 +667,16 @@ def draw_bottom_hud(
         session_json: Session object with metrics and thresholds.
         current_frame: Current frame number.
         total_frames: Total frames in sequence.
+        camera_angle: Camera angle description (e.g. 'face_on' or 'down_the_line').
+        start_frame: First frame of the critical (swing) window.
+        end_frame: Last frame of the critical window (defaults to total_frames - 1).
 
     Returns:
         Frame with HUD panel drawn.
     """
+    if end_frame is None:
+        end_frame = max(total_frames - 1, 0)
+
     height, width = frame.shape[:2]
     hud_height = int(height * 0.20)  # Bottom 20%
     hud_top = height - hud_height
@@ -396,62 +687,134 @@ def draw_bottom_hud(
     # Draw border line
     cv2.line(frame, (0, hud_top), (width, hud_top), color=(100, 100, 100), thickness=2)
     
-    # Metrics to display (13 metrics per spec)
-    metrics = getattr(session_json, "metrics", {})
-    thresholds = getattr(session_json, "active_thresholds", {})
+    # Extract metrics and thresholds from session
+    if isinstance(session_json, dict):
+        metrics = session_json.get("metrics", {})
+        thresholds = session_json.get("active_thresholds", {})
+    else:
+        metrics = getattr(session_json, "metrics", {})
+        thresholds = getattr(session_json, "active_thresholds", {})
+
+    left_keys = ["tempo_ratio", "x_factor", "hip_sway", "head_sway"]
+    right_keys = ["hip_turn", "shoulder_turn", "side_bend", "hips_open"]
     
-    metric_keys = [
-        "tempo_ratio", "x_factor", "spine_deviation_max", "hip_sway", "head_sway",
-        "hip_turn", "shoulder_turn", "side_bend", "hips_open", "wrist_lag",
-        "knee_flex_left", "knee_flex_right", "stance_width"
-    ]
-    
-    # Display first 4 metrics in HUD (space-limited)
-    y_pos = hud_top + 25
-    x_pos = 20
-    col_width = width // 4
-    
-    for i, key in enumerate(metric_keys[:4]):
-        if i > 0 and i % 4 == 0:
-            y_pos += 30
-            x_pos = 20
+    metric_display_names = {
+        "tempo_ratio": "Tempo Ratio",
+        "x_factor": "X-Factor",
+        "hip_sway": "Hip Sway",
+        "head_sway": "Head Sway",
+        "hip_turn": "Hip Turn",
+        "shoulder_turn": "Shoulder Turn",
+        "side_bend": "Side Bend",
+        "hips_open": "Hips Open"
+    }
+
+    def get_metric_text_and_color(key: str) -> tuple[str, tuple[int, int, int]]:
+        display_name = metric_display_names.get(key, key.replace('_', ' ').title())
         
-        metric = metrics.get(key, {}) if isinstance(metrics, dict) else None
+        # Accessing metrics dict or mock attributes
+        metric = metrics.get(key) if isinstance(metrics, dict) else getattr(metrics, key, None)
         
-        if metric and hasattr(metric, "value") and metric.value is not None:
-            value = metric.value
+        if metric is None:
+            return f"{display_name}: N/A", (150, 150, 150)
+            
+        if isinstance(metric, dict):
+            value = metric.get("value")
+            unit = metric.get("unit", "")
+        else:
+            value = getattr(metric, "value", None)
             unit = getattr(metric, "unit", "")
             
-            # Determine color based on threshold
-            threshold_obj = thresholds.get(key) if thresholds else None
-            green_range = None
-            amber_range = None
+        if value is None:
+            return f"{display_name}: N/A", (150, 150, 150)
             
-            if threshold_obj:
+        safe_unit = unit.replace("\u00b0", "deg") if unit else ""
+        if safe_unit == "°":
+            safe_unit = "deg"
+            
+        try:
+            val_float = float(value)
+            text = f"{display_name}: {val_float:.1f}{safe_unit}"
+        except (ValueError, TypeError):
+            text = f"{display_name}: {value}{safe_unit}"
+            val_float = 0.0
+            
+        # Determine color based on threshold
+        threshold_obj = thresholds.get(key) if thresholds else None
+        green_range = None
+        amber_range = None
+        
+        if threshold_obj:
+            if isinstance(threshold_obj, dict):
+                green_range = threshold_obj.get("green")
+                amber_range = threshold_obj.get("amber")
+            else:
                 if hasattr(threshold_obj, "green"):
-                    green_range = tuple(threshold_obj.green) if threshold_obj.green else None
+                    green_range = threshold_obj.green
                 if hasattr(threshold_obj, "amber"):
-                    amber_range = tuple(threshold_obj.amber) if threshold_obj.amber else None
+                    amber_range = threshold_obj.amber
+                    
+        if green_range:
+            green_range = tuple(green_range)
+        if amber_range:
+            amber_range = tuple(amber_range)
             
-            color = _get_color_for_threshold(value, green_range, amber_range)
-            
-            # Format value
-            text = f"{key.replace('_', ' ')[:10]}: {value:.1f}{unit}"
-            cv2.putText(frame, text, (x_pos + (i % 4) * col_width, y_pos),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        color = _get_color_for_threshold(val_float, green_range, amber_range)
+        return text, color
+
+    # Calculate layout geometry
+    spacing = max(12, int(hud_height * 0.15))
+    font_scale = 0.45
+    thickness = 1
     
-    # Display frame counter on right side
+    # 1. Left panel (x=10)
+    for idx, key in enumerate(left_keys):
+        text, color = get_metric_text_and_color(key)
+        y = hud_top + spacing + idx * spacing
+        cv2.putText(frame, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
+        
+    # 2. Right panel (x = frame_width//2 + 10)
+    right_x = width // 2 + 10
+    for idx, key in enumerate(right_keys):
+        text, color = get_metric_text_and_color(key)
+        y = hud_top + spacing + idx * spacing
+        cv2.putText(frame, text, (right_x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
+        
+    # 3. Frame counter: at x = frame_width - 160, y near bottom (never clipped)
     frame_text = f"Frame: {current_frame}/{total_frames}"
-    cv2.putText(frame, frame_text, (width - 200, hud_top + 25),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+    counter_y = hud_top + spacing + 4 * spacing + 2
+    cv2.putText(
+        frame, frame_text,
+        (width - 160, counter_y),
+        cv2.FONT_HERSHEY_SIMPLEX, font_scale, (200, 200, 200), thickness
+    )
     
-    # Display score if available
-    scores = getattr(session_json, "scores", {})
-    if scores and hasattr(scores, "overall") and scores.overall is not None:
-        score_text = f"Score: {scores.overall:.0f}"
-        cv2.putText(frame, score_text, (width - 200, hud_top + 50),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2)
+    # 4. Swing phase label at bottom-left — dynamic based on swing window
+    phase_lbl = _get_swing_phase_label(current_frame, start_frame, end_frame)
+    cv2.putText(
+        frame, phase_lbl,
+        (10, counter_y),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2  # Bold, white
+    )
     
+    # 5. Horizontal progress bar below phase label (250px wide)
+    bar_x1 = 10
+    bar_x2 = 260  # Extended from 200 → 260 (250px wide)
+    bar_y1 = counter_y + 6
+    bar_y2 = counter_y + 12  # 6px tall
+    
+    # Draw background bar (dark grey)
+    cv2.rectangle(frame, (bar_x1, bar_y1), (bar_x2, bar_y2), (80, 80, 80), -1)
+    
+    # Draw filled progress bar (bright green), proportional to current_frame / total_frames
+    if total_frames > 0:
+        pct = min(max(current_frame / total_frames, 0.0), 1.0)
+    else:
+        pct = 0.0
+    fill_x = int(bar_x1 + (bar_x2 - bar_x1) * pct)
+    if fill_x > bar_x1:
+        cv2.rectangle(frame, (bar_x1, bar_y1), (fill_x, bar_y2), (0, 255, 0), -1)
+        
     return frame
 
 
