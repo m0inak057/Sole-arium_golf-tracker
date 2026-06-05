@@ -12,9 +12,10 @@ interface VideoPlayerProps {
   src: string;
   title?: string;
   className?: string;
+  onError?: () => void;
 }
 
-export default function VideoPlayer({ src, title, className = "" }: VideoPlayerProps) {
+export default function VideoPlayer({ src, title, className = "", onError }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -25,15 +26,18 @@ export default function VideoPlayer({ src, title, className = "" }: VideoPlayerP
 
     const handlePlay = () => setIsPlaying(true);
     const handlePause = () => setIsPlaying(false);
+    const handleError = () => onError?.();
 
     video.addEventListener("play", handlePlay);
     video.addEventListener("pause", handlePause);
+    video.addEventListener("error", handleError);
 
     return () => {
       video.removeEventListener("play", handlePlay);
       video.removeEventListener("pause", handlePause);
+      video.removeEventListener("error", handleError);
     };
-  }, []);
+  }, [onError]);
 
   const togglePlay = () => {
     if (videoRef.current) {

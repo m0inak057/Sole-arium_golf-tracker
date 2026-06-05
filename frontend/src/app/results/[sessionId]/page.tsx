@@ -29,8 +29,13 @@ export default function ResultsPage() {
     getFullSession(sessionId)
       .then((data) => {
         setSession(data);
-        if (data.primary_camera_angle) {
+        const isDual = data.dual_video_status?.dual_processing_mode || false;
+        const hasDownTheLine = isDual && !!data.annotated_down_the_line_path;
+
+        if (data.primary_camera_angle && hasDownTheLine) {
           setActiveAngle(data.primary_camera_angle);
+        } else {
+          setActiveAngle("face_on");
         }
       })
       .catch((err) => {
@@ -45,7 +50,7 @@ export default function ResultsPage() {
   if (error) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 selection:bg-emerald-500/30">
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           className="bg-slate-900/50 backdrop-blur-xl border border-red-500/20 p-8 rounded-3xl text-center max-w-md"
@@ -55,7 +60,7 @@ export default function ResultsPage() {
           </div>
           <h1 className="text-2xl font-bold mb-4 text-slate-100">Analysis Failed</h1>
           <p className="text-slate-400 mb-8">{error}</p>
-          <button 
+          <button
              onClick={() => router.push("/")}
              className="px-6 py-3 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
           >
@@ -76,13 +81,14 @@ export default function ResultsPage() {
   }
 
   const isDual = session.dual_video_status?.dual_processing_mode || false;
+  const hasDownTheLinVideo = isDual && !!session.annotated_down_the_line_path;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50 selection:bg-emerald-500/30 pb-20">
       {/* Top Banner Area */}
       <div className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 backdrop-blur-xl bg-opacity-80">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-4 flex items-center justify-between">
-          <button 
+          <button
             onClick={() => router.push("/")}
             className="flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-emerald-400 transition"
           >
@@ -95,9 +101,9 @@ export default function ResultsPage() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 md:px-8 pt-8 md:pt-12 space-y-12">
-        
+
         {/* Header Hero */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="flex flex-col lg:flex-row items-start lg:items-end justify-between gap-8"
@@ -116,14 +122,14 @@ export default function ResultsPage() {
               <span className="capitalize">{isDual ? "Dual Angle" : (session.camera_angle?.replace("_", " ") ?? "Unknown View")}</span>
             </div>
           </div>
-          
+
           <div className="shrink-0">
              <ScoreCard scores={session.scores} />
           </div>
         </motion.div>
 
         {/* Video & Primary Layout */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
@@ -155,12 +161,16 @@ export default function ResultsPage() {
                   </button>
                   <button
                     onClick={() => setActiveAngle("down_the_line")}
+                    disabled={!hasDownTheLinVideo}
                     className={cn(
                       "px-4 py-2 text-xs font-bold uppercase tracking-widest rounded-lg transition-all",
                       activeAngle === "down_the_line"
                         ? "bg-emerald-500 text-slate-950 shadow-lg"
-                        : "text-slate-400 hover:text-slate-300"
+                        : hasDownTheLinVideo
+                        ? "text-slate-400 hover:text-slate-300"
+                        : "text-slate-600 cursor-not-allowed opacity-50"
                     )}
+                    title={!hasDownTheLinVideo ? "Down-the-line video is still processing..." : ""}
                   >
                     Down-The-Line
                   </button>
@@ -169,7 +179,7 @@ export default function ResultsPage() {
             </div>
 
             <div className="flex-1 bg-slate-950/50 p-6 flex flex-col items-center justify-center min-h-[500px]">
-              <AnnotatedVideo sessionId={sessionId} angle={isDual ? activeAngle : undefined} />
+              <AnnotatedVideo sessionId={sessionId} angle={isDual && hasDownTheLinVideo ? activeAngle : undefined} />
             </div>
 
             {/* DL Actions */}
